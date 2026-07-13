@@ -1,0 +1,48 @@
+[package]
+name = "ttl-legacy-backend"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[dependencies]
+actix-web = "4"
+actix-rt = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.21"
+
+# Axum HTTP server (used by legacy preference + reminder API)
+axum = { version = "0.7", features = ["macros"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+log = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+
+env_logger = "0.11"
+thiserror = "1"
+csv = "1"
+
+# SQLite used by the axum DB contract (Db::open/migrate/upsert/get/all)
+rusqlite = { version = "0.33", features = ["bundled"] }
+
+# Push notifications (FCM via HTTP v1 API)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# JWT authentication for WebSocket connections
+jsonwebtoken = "9"
+
+# Distributed cache for multi-node consensus checks
+redis = "0.27"
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockito = "1.4"
+

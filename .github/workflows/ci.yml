@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build crate
+        run: cargo build --package ttl-vault --lib
+
+      - name: Run tests
+        run: cargo test --package ttl-vault
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --package ttl-vault -- -D warnings
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run security audit
+        run: cargo audit --deny warnings
+
+      - name: Scan for secrets with Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: detect --source . --config .gitleaks.toml --redact --fail
+
+      - name: Validate OpenAPI specification
+        run: |
+          if command -v spectacle &> /dev/null; then
+            spectacle docs/openapi.yaml
+          fi
+          python3 -m pip install openapi-spec-validator 2>/dev/null || true
+          if command -v openapi-spec-validator &> /dev/null; then
+            openapi-spec-validator docs/openapi.yaml
+          fi
+
+      - name: Check version consistency
+        run: |
+          CHANGELOG_VERSION=$(grep -m 1 "^## \[" CHANGELOG.md | sed -E 's/## \[([0-9]+\.[0-9]+\.[0-9]+)\].*/\1/')
+          LIB_VERSION=$(grep -oE 'DataKey::Version.*"([0-9]+\.[0-9]+\.[0-9]+)"' contracts/ttl_vault/src/lib.rs | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          if [ "$CHANGELOG_VERSION" != "$LIB_VERSION" ]; then
+            echo "Version mismatch: CHANGELOG ($CHANGELOG_VERSION) != lib.rs ($LIB_VERSION)"
+            exit 1
+          fi

@@ -1,0 +1,17 @@
+# Cargo Audit Configuration
+# This file configures vulnerability severity thresholds and allows accepted advisories.
+# The CI will fail on any CRITICAL or HIGH severity vulnerabilities.
+
+# Vulnerabilities to deny (CI will fail)
+deny = ["unmaintained", "unsound"]
+
+# Vulnerabilities to warn on (CI will pass but warn)
+warn = []
+
+# Accepted vulnerability advisories
+# Format: advisory IDs that have been reviewed and accepted due to legitimate reasons
+# Include justification for each acceptance
+[advisories]
+
+# Example (if any critical vulnerability needs to be accepted):
+# "RUSTSEC-2021-0001" = { reason = "This affects only feature X which is not used" }
