@@ -1586,7 +1586,7 @@ impl TtlVaultContract {
             let mut applied: Option<BeneficiaryRotationEntry> = None;
             for entry in schedule.iter() {
                 if entry.effective_timestamp <= now
-                    && applied.as_ref().is_none_or(|a: &BeneficiaryRotationEntry| {
+                    && applied.as_ref().map_or(true, |a: &BeneficiaryRotationEntry| {
                         entry.effective_timestamp > a.effective_timestamp
                     })
                 {
@@ -2599,7 +2599,7 @@ impl TtlVaultContract {
                 let mut applied: Option<BeneficiaryRotationEntry> = None;
                 for entry in schedule.iter() {
                     if entry.effective_timestamp <= now
-                        && applied.as_ref().is_none_or(|a: &BeneficiaryRotationEntry| {
+                        && applied.as_ref().map_or(true, |a: &BeneficiaryRotationEntry| {
                             entry.effective_timestamp > a.effective_timestamp
                         })
                     {
@@ -2858,7 +2858,7 @@ impl TtlVaultContract {
             let mut applied: Option<BeneficiaryRotationEntry> = None;
             for entry in schedule.iter() {
                 if entry.effective_timestamp <= now
-                    && applied.as_ref().is_none_or(|a: &BeneficiaryRotationEntry| {
+                    && applied.as_ref().map_or(true, |a: &BeneficiaryRotationEntry| {
                         entry.effective_timestamp > a.effective_timestamp
                     })
                 {
@@ -4312,7 +4312,7 @@ impl TtlVaultContract {
                 .get::<DataKey, VestingRolloverConfig>(&DataKey::VestingRollover(vault_id));
             if rollover_cfg
                 .as_ref()
-                .is_none_or(|c| !c.enabled || c.rolled_amount == 0)
+                .map_or(true, |c| !c.enabled || c.rolled_amount == 0)
             {
                 return Err(ContractError::NothingToClaimYet);
             }
