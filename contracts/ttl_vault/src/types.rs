@@ -37,6 +37,11 @@ pub const INHERITANCE_TOPIC: Symbol = symbol_short!("inherit");
 pub const ADD_PASSKEY_TOPIC: Symbol = symbol_short!("add_pk");
 pub const REMOVE_PASSKEY_TOPIC: Symbol = symbol_short!("rm_pk");
 pub const ROTATE_PASSKEY_TOPIC: Symbol = symbol_short!("rot_pk");
+// Issue #559: passkey escrow. `symbol_short!` caps at 9 chars, so the cancel
+// topic is truncated from the spec's conceptual "pk_esc_can" to "pk_esccan".
+pub const PASSKEY_ESCROWED_TOPIC: Symbol = symbol_short!("pk_esc");
+pub const PASSKEY_ESCROW_RELEASED_TOPIC: Symbol = symbol_short!("pk_escrel");
+pub const PASSKEY_ESCROW_CANCELLED_TOPIC: Symbol = symbol_short!("pk_esccan");
 pub const BACKUP_CODE_USED_TOPIC: Symbol = symbol_short!("bk_used");
 pub const BACKUP_CODES_GENERATED_TOPIC: Symbol = symbol_short!("bk_gen");
 pub const DELEGATE_BENEFICIARY_TOPIC: Symbol = symbol_short!("del_ben");
@@ -519,6 +524,8 @@ pub enum DataKey {
     WithdrawalAuditLog(u64),
     // Issue #574: withdrawal rollback
     WithdrawalRollback(u64),
+    // Issue #559: passkey escrow
+    PasskeyEscrow(u64, BytesN<32>),
 }
 
 /// Check-in history entry for TTL prediction - Issue #482
@@ -728,6 +735,14 @@ pub struct PasskeyHash {
     /// does not implement the `ScVal` conversion path that `#[contracttype]` derives
     /// under `testutils` (see soroban-sdk 21.7.7).
     pub biometric_hash: Option<Bytes>,
+}
+
+/// Passkey escrow record - Issue #559
+#[contracttype]
+#[derive(Clone)]
+pub struct PasskeyEscrowRecord {
+    pub recovery_contact: Address,
+    pub escrowed_at: u64,
 }
 
 /// Backup code entry - Issue #393
