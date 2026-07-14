@@ -80,21 +80,29 @@ pub fn email_subject(
         (Locale::En, NotificationType::CheckInReminder) => "Time to check in to your vault",
         (Locale::En, NotificationType::VaultReleased) => "Your vault has been released",
         (Locale::En, NotificationType::VaultPaused) => "Your vault has been paused",
+        (Locale::En, NotificationType::PasskeyExpiringSoon) => "Your passkey is expiring soon",
+        (Locale::En, NotificationType::PasskeyExpired) => "Your passkey has expired",
         // Spanish
         (Locale::Es, NotificationType::ExpiryWarning) => "Tu bóveda está por vencer",
         (Locale::Es, NotificationType::CheckInReminder) => "Es hora de registrarte en tu bóveda",
         (Locale::Es, NotificationType::VaultReleased) => "Tu bóveda ha sido liberada",
         (Locale::Es, NotificationType::VaultPaused) => "Tu bóveda ha sido pausada",
+        (Locale::Es, NotificationType::PasskeyExpiringSoon) => "Tu clave de acceso está por vencer",
+        (Locale::Es, NotificationType::PasskeyExpired) => "Tu clave de acceso ha vencido",
         // French
         (Locale::Fr, NotificationType::ExpiryWarning) => "Votre coffre expire bientôt",
         (Locale::Fr, NotificationType::CheckInReminder) => "Il est temps de vous enregistrer",
         (Locale::Fr, NotificationType::VaultReleased) => "Votre coffre a été libéré",
         (Locale::Fr, NotificationType::VaultPaused) => "Votre coffre a été mis en pause",
+        (Locale::Fr, NotificationType::PasskeyExpiringSoon) => "Votre clé d'accès expire bientôt",
+        (Locale::Fr, NotificationType::PasskeyExpired) => "Votre clé d'accès a expiré",
         // German
         (Locale::De, NotificationType::ExpiryWarning) => "Ihr Tresor läuft bald ab",
         (Locale::De, NotificationType::CheckInReminder) => "Zeit für Ihren Check-in",
         (Locale::De, NotificationType::VaultReleased) => "Ihr Tresor wurde freigegeben",
         (Locale::De, NotificationType::VaultPaused) => "Ihr Tresor wurde pausiert",
+        (Locale::De, NotificationType::PasskeyExpiringSoon) => "Ihr Passkey läuft bald ab",
+        (Locale::De, NotificationType::PasskeyExpired) => "Ihr Passkey ist abgelaufen",
     }
 }
 
@@ -117,6 +125,13 @@ pub fn email_body(
             format!("Vault {vault_id} has been released to the designated beneficiary.")
         }
         (Locale::En, NotificationType::VaultPaused) => format!("Vault {vault_id} has been paused."),
+        (Locale::En, NotificationType::PasskeyExpiringSoon) => {
+            let h = hours_remaining.unwrap_or(24);
+            format!("A passkey on vault {vault_id} expires in approximately {h} hours. Rotate or extend it to keep access.")
+        }
+        (Locale::En, NotificationType::PasskeyExpired) => {
+            format!("A passkey on vault {vault_id} has expired.")
+        }
         // Spanish
         (Locale::Es, NotificationType::ExpiryWarning) => {
             let h = hours_remaining.unwrap_or(24);
@@ -130,6 +145,13 @@ pub fn email_body(
         }
         (Locale::Es, NotificationType::VaultPaused) => {
             format!("La bóveda {vault_id} ha sido pausada.")
+        }
+        (Locale::Es, NotificationType::PasskeyExpiringSoon) => {
+            let h = hours_remaining.unwrap_or(24);
+            format!("Una clave de acceso de la bóveda {vault_id} vence en aproximadamente {h} horas. Rótala o extiéndela para mantener el acceso.")
+        }
+        (Locale::Es, NotificationType::PasskeyExpired) => {
+            format!("Una clave de acceso de la bóveda {vault_id} ha vencido.")
         }
         // French
         (Locale::Fr, NotificationType::ExpiryWarning) => {
@@ -145,6 +167,13 @@ pub fn email_body(
         (Locale::Fr, NotificationType::VaultPaused) => {
             format!("Le coffre {vault_id} a été mis en pause.")
         }
+        (Locale::Fr, NotificationType::PasskeyExpiringSoon) => {
+            let h = hours_remaining.unwrap_or(24);
+            format!("Une clé d'accès du coffre {vault_id} expire dans environ {h} heures. Faites-la pivoter ou prolongez-la pour conserver l'accès.")
+        }
+        (Locale::Fr, NotificationType::PasskeyExpired) => {
+            format!("Une clé d'accès du coffre {vault_id} a expiré.")
+        }
         // German
         (Locale::De, NotificationType::ExpiryWarning) => {
             let h = hours_remaining.unwrap_or(24);
@@ -157,6 +186,13 @@ pub fn email_body(
             format!("Tresor {vault_id} wurde an den designierten Begünstigten freigegeben.")
         }
         (Locale::De, NotificationType::VaultPaused) => format!("Tresor {vault_id} wurde pausiert."),
+        (Locale::De, NotificationType::PasskeyExpiringSoon) => {
+            let h = hours_remaining.unwrap_or(24);
+            format!("Ein Passkey von Tresor {vault_id} läuft in etwa {h} Stunden ab. Rotieren oder verlängern Sie ihn, um den Zugriff zu behalten.")
+        }
+        (Locale::De, NotificationType::PasskeyExpired) => {
+            format!("Ein Passkey von Tresor {vault_id} ist abgelaufen.")
+        }
     }
 }
 
