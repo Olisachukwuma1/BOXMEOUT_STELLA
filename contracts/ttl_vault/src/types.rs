@@ -172,6 +172,8 @@ pub const PASSKEY_RECOVERED_TOPIC: Symbol = symbol_short!("pk_rcvd");
 // Issue #562: passkey compromise response
 pub const PASSKEY_LOCKOUT_TOPIC: Symbol = symbol_short!("pk_lock");
 pub const PASSKEY_UNLOCKED_TOPIC: Symbol = symbol_short!("pk_unlk");
+// Issue #558: passkey audit trail
+pub const PASSKEY_AUDIT_TOPIC: Symbol = symbol_short!("pk_audit");
 // Issue #561: passkey rotation enforcement
 pub const PASSKEY_ROTATION_REQUIRED_TOPIC: Symbol = symbol_short!("pk_rot_r");
 pub const PASSKEY_ROTATION_ENFORCED_TOPIC: Symbol = symbol_short!("pk_rot_e");
@@ -519,6 +521,8 @@ pub enum DataKey {
     WithdrawalAuditLog(u64),
     // Issue #574: withdrawal rollback
     WithdrawalRollback(u64),
+    // Issue #558: passkey audit trail
+    PasskeyAuditLog(u64),
 }
 
 /// Check-in history entry for TTL prediction - Issue #482
@@ -850,6 +854,16 @@ pub struct Vault {
     pub burn_percentage: u32,
     /// Address that receives inactivity penalty transfers
     pub penalty_recipient: Option<Address>,
+}
+
+/// Passkey audit trail entry - Issue #558
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PasskeyAuditEntry {
+    pub operation: String,
+    pub actor: Address,
+    pub passkey_hash: BytesN<32>,
+    pub timestamp: u64,
 }
 
 /// Passkey usage entry for tracking check-ins - Issue #395
