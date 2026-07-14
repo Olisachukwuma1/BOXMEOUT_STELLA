@@ -110,8 +110,24 @@ impl ZkVerifierContract {
 
     /// Verifies a zero-knowledge proof against a claim using oracle attestation.
     ///
-    /// Returns `true` when both `proof` and `claim` are non-empty and `proof`
-    /// is not the known-invalid 0x00 sentinel.
+    /// This hashes `proof` and `claim` with SHA-256 (the same digests used by
+    /// [`Self::attest`]) and looks up `DataKey::Attestation(proof_hash,
+    /// claim_hash)` in instance storage. Returns `true` only if:
+    ///   1. an attestation exists for this exact `(proof, claim)` pair, AND
+    ///   2. the oracle that made that attestation is *currently* a registered
+    ///      oracle (i.e. has not since been revoked via `revoke_oracle`).
+    ///
+    /// Revocation semantics: attestations are not deleted on revocation, but
+    /// they are only honored while the attesting oracle remains registered.
+    /// This is the safer choice for a contract that gates release of real
+    /// funds — a revoked oracle (e.g. one that was compromised or found to be
+    /// misbehaving) should immediately lose the ability to have its past
+    /// attestations relied upon, without requiring a separate sweep to purge
+    /// its attestation records.
+    ///
+    /// Returns `false` (does not panic) when no matching attestation exists,
+    /// or when the attesting oracle is no longer registered — both are normal
+    /// "not verified" outcomes.
     ///
     /// Emits a `vfy_claim` event with `(result, claim_hash)` on every call
     /// that passes input validation.
@@ -129,11 +145,21 @@ impl ZkVerifierContract {
             panic_with_error!(&env, VerifierError::ClaimTooLarge);
         }
 
-        // STUB: a single 0x00 byte is treated as a known-invalid proof sentinel.
-        // Real ZK verification would replace this with cryptographic validation.
-        let result = !(proof.len() == 1 && proof.get(0) == Some(0x00));
-
+        let proof_hash: BytesN<32> = env.crypto().sha256(&proof).into();
         let claim_hash: BytesN<32> = env.crypto().sha256(&claim).into();
+
+        let result = env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::Attestation(proof_hash, claim_hash.clone()))
+            .map(|attesting_oracle| {
+                env.storage()
+                    .instance()
+                    .get::<DataKey, bool>(&DataKey::Oracle(attesting_oracle))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+
         env.events()
             .publish((VERIFY_CLAIM_TOPIC,), (result, claim_hash));
 

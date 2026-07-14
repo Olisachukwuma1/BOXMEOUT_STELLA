@@ -40,20 +40,20 @@ fn test_malformed_empty_claim_panics() {
 
 // ---- oracle model tests ----
 
+/// An unattested (proof, claim) pair — never attested by any oracle — must
+/// return `false`, not panic.
 #[test]
 fn test_unattested_proof_returns_false() {
-    // `verify_claim` remains a non-cryptographic sentinel-byte stub (see its
-    // doc comment) and is not wired to the oracle attestation mechanism below,
-    // so an unattested, non-sentinel proof still returns `true`.
     let (env, _, client) = setup();
     let proof = bytes!(&env, 0xdeadbeef);
     let claim = bytes!(&env, 0xcafebabe);
-    assert!(client.verify_claim(&proof, &claim));
+    assert!(!client.verify_claim(&proof, &claim));
 }
 
 // ── Existing correctness tests ────────────────────────────────────────────────
 
-/// Valid proof and claim — must return true.
+/// A (proof, claim) pair attested by a currently-registered oracle — must
+/// return true.
 #[test]
 fn test_attested_proof_returns_true() {
     let (env, _, client) = setup();
@@ -67,10 +67,10 @@ fn test_attested_proof_returns_true() {
     assert!(client.verify_claim(&proof, &claim));
 }
 
+/// Attesting one proof does not validate a different, unattested proof for
+/// the same claim.
 #[test]
 fn test_different_proof_not_validated_after_attestation() {
-    // As above: `verify_claim` doesn't consult attestations, so an unattested
-    // (but non-sentinel) proof still returns `true`.
     let (env, _, client) = setup();
     let oracle = Address::generate(&env);
     client.register_oracle(&oracle);
@@ -80,9 +80,11 @@ fn test_different_proof_not_validated_after_attestation() {
     client.attest(&oracle, &proof, &claim);
 
     let other_proof = bytes!(&env, 0x1234);
-    assert!(client.verify_claim(&other_proof, &claim));
+    assert!(!client.verify_claim(&other_proof, &claim));
 }
 
+/// Once the attesting oracle is revoked, its previously-stored attestation
+/// must no longer be honored — `verify_claim` returns `false`, not panic.
 #[test]
 fn test_revoked_oracle_attestation_no_longer_accepted() {
     let (env, _, client) = setup();
@@ -93,15 +95,15 @@ fn test_revoked_oracle_attestation_no_longer_accepted() {
     let claim = bytes!(&env, 0xcafebabe);
     client.attest(&oracle, &proof, &claim);
 
-    // Attestation was stored before revocation — verify it persists
+    // Attestation is honored while the oracle remains registered.
     assert!(client.verify_claim(&proof, &claim));
 
-    // Revoking the oracle does not retroactively remove stored attestations;
-    // it only prevents future attest() calls.
+    // Revoking the oracle does not delete the stored attestation record, but
+    // verify_claim must stop honoring it since the attesting oracle is no
+    // longer currently registered.
     client.revoke_oracle(&oracle);
     assert!(!client.is_oracle(&oracle));
-    // Existing attestation still validates (attested fact is immutable).
-    assert!(client.verify_claim(&proof, &claim));
+    assert!(!client.verify_claim(&proof, &claim));
 }
 
 #[test]
@@ -141,13 +143,22 @@ fn test_double_initialize_fails() {
 
 // ── #817: Input size limit tests ──────────────────────────────────────────────
 
-/// Proof at exactly MAX_PROOF_SIZE — must succeed.
+/// Proof at exactly MAX_PROOF_SIZE — must pass validation (no panic) and,
+/// once attested by a registered oracle, must verify as true.
 #[test]
 fn test_proof_at_max_size_succeeds() {
     let (env, _, client) = setup();
+    let oracle = Address::generate(&env);
+    client.register_oracle(&oracle);
+
     let data = [0xffu8; MAX_PROOF_SIZE as usize];
     let proof = Bytes::from_slice(&env, &data);
     let claim = bytes!(&env, 0xcafebabe);
+
+    // Unattested: passes validation, but returns false.
+    assert!(!client.verify_claim(&proof, &claim));
+
+    client.attest(&oracle, &proof, &claim);
     assert!(client.verify_claim(&proof, &claim));
 }
 
@@ -162,13 +173,22 @@ fn test_proof_exceeds_max_size_panics() {
     client.verify_claim(&proof, &claim);
 }
 
-/// Claim at exactly MAX_CLAIM_SIZE — must succeed.
+/// Claim at exactly MAX_CLAIM_SIZE — must pass validation (no panic) and,
+/// once attested by a registered oracle, must verify as true.
 #[test]
 fn test_claim_at_max_size_succeeds() {
     let (env, _, client) = setup();
+    let oracle = Address::generate(&env);
+    client.register_oracle(&oracle);
+
     let proof = bytes!(&env, 0xdeadbeef);
     let data = [0xaau8; MAX_CLAIM_SIZE as usize];
     let claim = Bytes::from_slice(&env, &data);
+
+    // Unattested: passes validation, but returns false.
+    assert!(!client.verify_claim(&proof, &claim));
+
+    client.attest(&oracle, &proof, &claim);
     assert!(client.verify_claim(&proof, &claim));
 }
 
@@ -185,23 +205,30 @@ fn test_claim_exceeds_max_size_panics() {
 
 // ── #818: Event emission tests ────────────────────────────────────────────────
 
-/// verify_claim with a valid proof must emit exactly one vfy_claim event.
+/// verify_claim with an attested proof must emit exactly one vfy_claim event.
 #[test]
 fn test_verify_claim_emits_event_on_true_result() {
     let (env, _, client) = setup();
+    let oracle = Address::generate(&env);
+    client.register_oracle(&oracle);
+
     let proof = bytes!(&env, 0xdeadbeef);
     let claim = bytes!(&env, 0xcafebabe);
+    client.attest(&oracle, &proof, &claim);
+
+    // attest() does not itself publish any events, so verify_claim() is the
+    // only event source here.
     let result = client.verify_claim(&proof, &claim);
     assert!(result);
     assert_eq!(env.events().all().len(), 1);
 }
 
-/// verify_claim with the 0x00 sentinel must emit exactly one vfy_claim event
-/// even when the result is false.
+/// verify_claim with an unattested proof must emit exactly one vfy_claim
+/// event even when the result is false.
 #[test]
 fn test_verify_claim_emits_event_on_false_result() {
     let (env, _, client) = setup();
-    let proof = bytes!(&env, 0x00); // known-invalid sentinel → result = false
+    let proof = bytes!(&env, 0xdeadbeef); // never attested → result = false
     let claim = bytes!(&env, 0xcafebabe);
     let result = client.verify_claim(&proof, &claim);
     assert!(!result);
