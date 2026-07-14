@@ -20,8 +20,8 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: ethos-protocol-backend
     environment:
       DATABASE_URL: postgres://ethos_user:ethos_password@db:5432/ethos_protocol

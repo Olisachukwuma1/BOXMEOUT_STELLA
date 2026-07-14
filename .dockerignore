@@ -1,0 +1,12 @@
+target/
+.git/
+.github/
+.claude/
+.kiro/
+.soroban/
+docs/
+scripts/
+*.md
+.env
+.env.local
+.env.*.local
