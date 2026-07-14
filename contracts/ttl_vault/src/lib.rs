@@ -1391,7 +1391,11 @@ impl TtlVaultContract {
         let dup_key =
             DataKey::VaultDuplicate(owner.clone(), beneficiary.clone(), check_in_interval);
         if env.storage().persistent().has(&dup_key) {
-            let existing_id: u64 = env.storage().persistent().get(&dup_key).unwrap();
+            let existing_id: u64 = env
+                .storage()
+                .persistent()
+                .get(&dup_key)
+                .expect("just checked has(&dup_key) above");
             env.events().publish(
                 (DUPLICATE_VAULT_TOPIC,),
                 (owner, beneficiary, check_in_interval, existing_id),
@@ -7020,7 +7024,7 @@ impl TtlVaultContract {
             .storage()
             .persistent()
             .get::<DataKey, OwnershipTransferRequest>(&key)
-            .unwrap();
+            .expect("just checked has(&key) above");
 
         let reason = if caller == vault.owner {
             String::from_str(&env, "cancelled")
@@ -10349,7 +10353,11 @@ impl TtlVaultContract {
                 v
             });
 
-        let current_delegate = chain.get(chain.len() - 1).unwrap();
+        // The chain always has at least one entry: either loaded from storage (which is
+        // only ever written non-empty, see below) or freshly seeded with the beneficiary.
+        let current_delegate = chain
+            .get(chain.len() - 1)
+            .expect("chain is seeded with at least one entry and never stored empty");
         current_delegate.require_auth();
 
         // Check if already in chain to prevent cycles
@@ -11987,19 +11995,27 @@ impl TtlVaultContract {
                 (head + len - 1) % 50
             };
 
-            let first_entry: CheckInHistoryEntry = env
+            let first_entry: Option<CheckInHistoryEntry> = env
                 .storage()
                 .persistent()
-                .get(&DataKey::CheckInEntry(vault_id, first_phys))
-                .unwrap();
-            let last_entry: CheckInHistoryEntry = env
+                .get(&DataKey::CheckInEntry(vault_id, first_phys));
+            let last_entry: Option<CheckInHistoryEntry> = env
                 .storage()
                 .persistent()
-                .get(&DataKey::CheckInEntry(vault_id, last_phys))
-                .unwrap();
+                .get(&DataKey::CheckInEntry(vault_id, last_phys));
 
-            let avg = (last_entry.timestamp - first_entry.timestamp) / (n as u64 - 1);
-            avg.max(1)
+            // A ring-buffer slot can be missing if its entry was evicted independently
+            // of the len/head counters (e.g. TTL expiry). Fall back to the configured
+            // interval rather than panicking on what would otherwise be a routine
+            // view-function call, matching `get_check_in_history`'s graceful handling
+            // of the same storage layout.
+            match (first_entry, last_entry) {
+                (Some(first_entry), Some(last_entry)) => {
+                    let avg = (last_entry.timestamp - first_entry.timestamp) / (n as u64 - 1);
+                    avg.max(1)
+                }
+                _ => vault.check_in_interval,
+            }
         } else {
             vault.check_in_interval
         };
