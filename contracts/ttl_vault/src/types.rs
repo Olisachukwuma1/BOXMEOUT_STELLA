@@ -175,6 +175,9 @@ pub const PASSKEY_UNLOCKED_TOPIC: Symbol = symbol_short!("pk_unlk");
 // Issue #561: passkey rotation enforcement
 pub const PASSKEY_ROTATION_REQUIRED_TOPIC: Symbol = symbol_short!("pk_rot_r");
 pub const PASSKEY_ROTATION_ENFORCED_TOPIC: Symbol = symbol_short!("pk_rot_e");
+// Issue #557: passkey delegation
+pub const PASSKEY_DELEGATED_TOPIC: Symbol = symbol_short!("pk_del");
+pub const PASSKEY_DELEGATION_REVOKED_TOPIC: Symbol = symbol_short!("pk_del_rv");
 
 // Issue: TTL Borrowing
 pub const TTL_BORROW_TOPIC: Symbol = symbol_short!("ttl_bor");
@@ -519,6 +522,8 @@ pub enum DataKey {
     WithdrawalAuditLog(u64),
     // Issue #574: withdrawal rollback
     WithdrawalRollback(u64),
+    // Issue #557: passkey delegation
+    PasskeyDelegation(u64, BytesN<32>),
 }
 
 /// Check-in history entry for TTL prediction - Issue #482
@@ -728,6 +733,15 @@ pub struct PasskeyHash {
     /// does not implement the `ScVal` conversion path that `#[contracttype]` derives
     /// under `testutils` (see soroban-sdk 21.7.7).
     pub biometric_hash: Option<Bytes>,
+}
+
+/// A time-bounded grant letting `delegate` perform check-ins on behalf of the
+/// vault owner using one specific passkey - Issue #557.
+#[contracttype]
+#[derive(Clone)]
+pub struct PasskeyDelegation {
+    pub delegate: Address,
+    pub expires_at: u64,
 }
 
 /// Backup code entry - Issue #393

@@ -19,7 +19,7 @@ use types::{
     CheckInHistoryEntry, CheckInStreak, ConditionalAcceptanceEntry, DataKey, DisputeStatus,
     GeoCheckInEntry, HibernationEntry, IntegrityReport, MetadataVersionEntry, MilestoneEntry,
     MilestoneVestingSchedule, MultiSigConfig, MultiSigOperation, MultiSigProposal, OwnershipProof,
-    OwnershipTransferRequest, PasskeyHash, PasskeyUsageEntry, PauseRecord,
+    OwnershipTransferRequest, PasskeyDelegation, PasskeyHash, PasskeyUsageEntry, PauseRecord,
     PendingBeneficiaryUpdate, ProofOfLifeEntry, ProposalStatus, ReleaseCondition, ReleaseEvent,
     ReleaseStatus, ReleaseVoteEntry, StateTransitionEntry, TokenCollateral, TokenConversion,
     TokenHedge, TokenLending, TokenRebalanceConfig, TokenStaking, TokenWeight, TtlBorrowRecord,
@@ -44,7 +44,8 @@ use types::{
     MULTISIG_PROPOSAL_EXPIRY, MULTISIG_PROPOSED_TOPIC, MULTISIG_REJECTED_TOPIC,
     MULTISIG_SIGNER_REMOVED_TOPIC, MULTISIG_VETOED_TOPIC, OWNERSHIP_ACCEPTED_TOPIC,
     OWNERSHIP_CANCELLED_TOPIC, OWNERSHIP_INITIATED_TOPIC, OWNERSHIP_PROOF_TOPIC, OWNERSHIP_TOPIC,
-    OWNERSHIP_TRANSFER_EXPIRED_TOPIC, PARTIAL_LIQUIDATE_TOPIC, PASSKEY_EXPIRY_EXTENDED_TOPIC,
+    OWNERSHIP_TRANSFER_EXPIRED_TOPIC, PARTIAL_LIQUIDATE_TOPIC, PASSKEY_DELEGATED_TOPIC,
+    PASSKEY_DELEGATION_REVOKED_TOPIC, PASSKEY_EXPIRY_EXTENDED_TOPIC,
     PASSKEY_LOCKOUT_TOPIC, PASSKEY_RECOVERED_TOPIC, PASSKEY_RECOVERY_INITIATED_TOPIC,
     PASSKEY_ROTATION_ENFORCED_TOPIC, PASSKEY_ROTATION_REQUIRED_TOPIC, PASSKEY_UNLOCKED_TOPIC,
     PASSKEY_USAGE_TOPIC, PAUSE_TOPIC, PAUSE_VAULT_TOPIC, PING_EXPIRY_TOPIC, POOL_CREATED_TOPIC,
@@ -108,6 +109,8 @@ mod bps_invariant_tests;
 mod lifecycle_tests;
 #[cfg(test)]
 mod regression_tests;
+#[cfg(test)]
+mod passkey_delegation_tests;
 
 /// Minimum TTL (in ledgers) before a persistent entry is eligible for extension.
 /// At ~5 s/ledger this is ~83 minutes.
@@ -1528,7 +1531,15 @@ impl TtlVaultContract {
         }
         let is_delegate =
             caller != vault.owner && Self::is_check_in_delegate(&env, vault_id, &caller);
-        if caller != vault.owner && !is_delegate {
+        // Issue #557: a caller holding a valid, non-expired delegation for this specific
+        // passkey may also check in on the owner's behalf. This is a separate, simpler
+        // mechanism than the general check-in delegate list above and is not subject to
+        // its nonce-replay protection, since the passkey hash itself is already validated
+        // below via `validate_passkey_for_checkin`.
+        let is_passkey_delegate = caller != vault.owner
+            && !is_delegate
+            && Self::is_valid_passkey_delegate(&env, vault_id, &passkey_hash, &caller);
+        if caller != vault.owner && !is_delegate && !is_passkey_delegate {
             return Err(ContractError::NotOwner);
         }
         // Enforce per-delegation nonce to prevent replay attacks
@@ -9775,6 +9786,124 @@ impl TtlVaultContract {
             }
         }
         false
+    }
+
+    // --- Issue #557: Passkey Delegation ---
+
+    /// Returns `true` if `addr` holds a valid (non-expired) delegation for `passkey_hash`.
+    fn is_valid_passkey_delegate(
+        env: &Env,
+        vault_id: u64,
+        passkey_hash: &BytesN<32>,
+        addr: &Address,
+    ) -> bool {
+        let key = DataKey::PasskeyDelegation(vault_id, passkey_hash.clone());
+        if let Some(delegation) = env.storage().persistent().get::<DataKey, PasskeyDelegation>(&key) {
+            if &delegation.delegate == addr && delegation.expires_at > env.ledger().timestamp() {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Grants `delegate` the right to perform check-ins on behalf of the vault owner
+    /// using the specific passkey `passkey_hash`, until `expires_at`.
+    ///
+    /// Only the vault owner can call this. The passkey must already be registered
+    /// on the vault via `add_passkey`.
+    ///
+    /// # Errors
+    /// * `ContractError::NotOwner` - If caller is not the vault owner
+    /// * `ContractError::AlreadyReleased` - If vault is not in Locked status
+    /// * `ContractError::PasskeyNotFound` - If `passkey_hash` is not registered
+    /// * `ContractError::InvalidInterval` - If `expires_at` is not in the future
+    /// * `ContractError::InvalidBeneficiary` - If `delegate` equals the owner
+    pub fn delegate_passkey(
+        env: Env,
+        vault_id: u64,
+        caller: Address,
+        passkey_hash: BytesN<32>,
+        delegate: Address,
+        expires_at: u64,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        let vault = Self::load_vault(&env, vault_id);
+        if caller != vault.owner {
+            return Err(ContractError::NotOwner);
+        }
+        if vault.status != ReleaseStatus::Locked {
+            return Err(ContractError::AlreadyReleased);
+        }
+        if !Self::is_valid_passkey(env.clone(), vault_id, passkey_hash.clone()) {
+            return Err(ContractError::PasskeyNotFound);
+        }
+        if expires_at <= env.ledger().timestamp() {
+            return Err(ContractError::InvalidInterval);
+        }
+        if delegate == vault.owner {
+            return Err(ContractError::InvalidBeneficiary);
+        }
+
+        let key = DataKey::PasskeyDelegation(vault_id, passkey_hash.clone());
+        let delegation = PasskeyDelegation {
+            delegate: delegate.clone(),
+            expires_at,
+        };
+        env.storage().persistent().set(&key, &delegation);
+        let ttl = vault_ttl_ledgers(vault.check_in_interval);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, VAULT_TTL_THRESHOLD, ttl);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
+        env.events().publish(
+            (PASSKEY_DELEGATED_TOPIC, vault_id),
+            (passkey_hash, delegate, expires_at),
+        );
+        Ok(())
+    }
+
+    /// Revokes any existing passkey delegation for `passkey_hash` on `vault_id`.
+    ///
+    /// Only the vault owner can call this. A no-op (still `Ok`) if no delegation exists.
+    ///
+    /// # Errors
+    /// * `ContractError::NotOwner` - If caller is not the vault owner
+    pub fn revoke_passkey_delegation(
+        env: Env,
+        vault_id: u64,
+        caller: Address,
+        passkey_hash: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        let vault = Self::load_vault(&env, vault_id);
+        if caller != vault.owner {
+            return Err(ContractError::NotOwner);
+        }
+
+        let key = DataKey::PasskeyDelegation(vault_id, passkey_hash.clone());
+        if let Some(delegation) = env.storage().persistent().get::<DataKey, PasskeyDelegation>(&key) {
+            env.storage().persistent().remove(&key);
+            env.storage()
+                .instance()
+                .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
+            env.events().publish(
+                (PASSKEY_DELEGATION_REVOKED_TOPIC, vault_id),
+                (passkey_hash, delegation.delegate),
+            );
+        }
+        Ok(())
+    }
+
+    /// Returns the active passkey delegation for `(vault_id, passkey_hash)`, if any.
+    pub fn get_passkey_delegation(
+        env: Env,
+        vault_id: u64,
+        passkey_hash: BytesN<32>,
+    ) -> Option<PasskeyDelegation> {
+        let key = DataKey::PasskeyDelegation(vault_id, passkey_hash);
+        env.storage().persistent().get(&key)
     }
 
     // --- Issue #934: Emergency Vault Recovery Code ---
