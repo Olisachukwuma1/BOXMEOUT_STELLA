@@ -19,8 +19,8 @@ use types::{
     CheckInHistoryEntry, CheckInStreak, ConditionalAcceptanceEntry, DataKey, DisputeStatus,
     GeoCheckInEntry, HibernationEntry, IntegrityReport, MetadataVersionEntry, MilestoneEntry,
     MilestoneVestingSchedule, MultiSigConfig, MultiSigOperation, MultiSigProposal, OwnershipProof,
-    OwnershipTransferRequest, PasskeyDelegation, PasskeyEscrowRecord, PasskeyHash,
-    PasskeyUsageEntry, PauseRecord,
+    OwnershipTransferRequest, PasskeyAuditEntry, PasskeyDelegation, PasskeyEscrowRecord,
+    PasskeyHash, PasskeyUsageEntry, PauseRecord,
     PendingBeneficiaryUpdate, ProofOfLifeEntry, ProposalStatus, ReleaseCondition, ReleaseEvent,
     ReleaseStatus, ReleaseVoteEntry, StateTransitionEntry, TokenCollateral, TokenConversion,
     TokenHedge, TokenLending, TokenRebalanceConfig, TokenStaking, TokenWeight, TtlBorrowRecord,
@@ -50,7 +50,8 @@ use types::{
     PASSKEY_ESCROW_RELEASED_TOPIC, PASSKEY_EXPIRY_EXTENDED_TOPIC,
     PASSKEY_LOCKOUT_TOPIC, PASSKEY_RECOVERED_TOPIC, PASSKEY_RECOVERY_INITIATED_TOPIC,
     PASSKEY_ROTATION_ENFORCED_TOPIC, PASSKEY_ROTATION_REQUIRED_TOPIC, PASSKEY_UNLOCKED_TOPIC,
-    PASSKEY_USAGE_TOPIC, PAUSE_TOPIC, PAUSE_VAULT_TOPIC, PING_EXPIRY_TOPIC, POOL_CREATED_TOPIC,
+    PASSKEY_AUDIT_TOPIC, PASSKEY_USAGE_TOPIC, PAUSE_TOPIC, PAUSE_VAULT_TOPIC, PING_EXPIRY_TOPIC,
+    POOL_CREATED_TOPIC,
     PROOF_OF_LIFE_TOPIC, RECOVERY_EXTEND_TOPIC, RELEASE_TOPIC, RELEASE_VOTE_PASSED_TOPIC,
     RELEASE_VOTE_TOPIC, REMOVE_PASSKEY_TOPIC, RESTORE_VAULT_TOPIC, RESUME_VAULT_TOPIC,
     REVOKE_DELEGATE_TOPIC, ROTATE_PASSKEY_TOPIC, SET_BENEFICIARIES_TOPIC,
@@ -107,6 +108,8 @@ mod beneficiary_vesting_auction_tests;
 mod beneficiary_vesting_tests;
 #[cfg(test)]
 mod bps_invariant_tests;
+#[cfg(test)]
+mod passkey_audit_tests;
 #[cfg(test)]
 mod lifecycle_tests;
 #[cfg(test)]
@@ -1664,6 +1667,8 @@ impl TtlVaultContract {
 
         // Log passkey usage - Issue #395
         Self::log_passkey_usage(&env, vault_id, &passkey_hash, now);
+        // Issue #558: passkey audit trail
+        Self::log_passkey_audit_entry(&env, vault_id, "use", &caller, &passkey_hash);
 
         // Persist last check-in time for rate limiting
         let lci_key = DataKey::LastCheckInTime(vault_id);
@@ -8844,6 +8849,65 @@ impl TtlVaultContract {
         );
     }
 
+    // --- Issue #558: Passkey Audit Trail ---
+
+    /// Appends an append-only audit entry for a passkey lifecycle operation
+    /// ("add" / "remove" / "use") to `PasskeyAuditLog(vault_id)` and emits
+    /// the `pk_audit` event.
+    fn log_passkey_audit_entry(
+        env: &Env,
+        vault_id: u64,
+        operation: &str,
+        actor: &Address,
+        passkey_hash: &BytesN<32>,
+    ) {
+        let key = DataKey::PasskeyAuditLog(vault_id);
+        let mut log: Vec<PasskeyAuditEntry> =
+            env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
+
+        let timestamp = env.ledger().timestamp();
+        log.push_back(PasskeyAuditEntry {
+            operation: String::from_str(env, operation),
+            actor: actor.clone(),
+            passkey_hash: passkey_hash.clone(),
+            timestamp,
+        });
+
+        env.storage().persistent().set(&key, &log);
+        let ttl = vault_ttl_ledgers(Self::load_vault(env, vault_id).check_in_interval);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, VAULT_TTL_THRESHOLD, ttl);
+
+        env.events().publish(
+            (PASSKEY_AUDIT_TOPIC, vault_id),
+            (
+                String::from_str(env, operation),
+                actor.clone(),
+                passkey_hash.clone(),
+                timestamp,
+            ),
+        );
+    }
+
+    /// Returns the full passkey audit trail for a vault.
+    ///
+    /// # Errors
+    /// * `ContractError::VaultNotFound` - If the vault does not exist.
+    pub fn get_passkey_audit_log(
+        env: Env,
+        vault_id: u64,
+    ) -> Result<Vec<PasskeyAuditEntry>, ContractError> {
+        if Self::try_load_vault(&env, vault_id).is_none() {
+            return Err(ContractError::VaultNotFound);
+        }
+        Ok(env
+            .storage()
+            .persistent()
+            .get(&DataKey::PasskeyAuditLog(vault_id))
+            .unwrap_or(Vec::new(&env)))
+    }
+
     // --- Issue #383: Vault Recovery Mode ---
 
     /// Sets a recovery contact who can extend the vault TTL if the owner loses access.
@@ -9326,6 +9390,10 @@ impl TtlVaultContract {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
+        // Issue #558: audit trail — rotation is recorded as a remove of the old
+        // hash followed by an add of the new hash, both at the current timestamp.
+        Self::log_passkey_audit_entry(&env, vault_id, "remove", &caller, &old_passkey_hash);
+        Self::log_passkey_audit_entry(&env, vault_id, "add", &caller, &new_passkey_hash);
         env.events().publish(
             (ROTATE_PASSKEY_TOPIC, vault_id),
             (old_passkey_hash, new_passkey_hash),
@@ -9511,6 +9579,7 @@ impl TtlVaultContract {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
+        Self::log_passkey_audit_entry(&env, vault_id, "add", &caller, &passkey_hash);
         env.events()
             .publish((ADD_PASSKEY_TOPIC, vault_id), passkey_hash);
         Ok(())
@@ -9692,6 +9761,8 @@ impl TtlVaultContract {
 
         // Log passkey usage and emit events
         Self::log_passkey_usage(&env, vault_id, &passkey_hash, now);
+        // Issue #558: passkey audit trail
+        Self::log_passkey_audit_entry(&env, vault_id, "use", &caller, &passkey_hash);
         env.events()
             .publish((BIO_CHECKIN_TOPIC, vault_id), (caller, now));
         Ok(())
@@ -9759,6 +9830,7 @@ impl TtlVaultContract {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
+        Self::log_passkey_audit_entry(&env, vault_id, "remove", &caller, &passkey_hash);
         env.events()
             .publish((REMOVE_PASSKEY_TOPIC, vault_id), passkey_hash);
         Ok(())
@@ -11826,6 +11898,8 @@ impl TtlVaultContract {
             Self::record_check_in_history(&env, vault_id, now);
             Self::update_check_in_streak(&env, vault_id, &vault, now);
             Self::log_passkey_usage(&env, vault_id, &passkey_hash, now);
+            // Issue #558: passkey audit trail
+            Self::log_passkey_audit_entry(&env, vault_id, "use", &caller, &passkey_hash);
             env.events().publish((CHECK_IN_TOPIC, vault_id), now);
         }
         env.storage()
@@ -12034,6 +12108,8 @@ impl TtlVaultContract {
         let owner_ids = Self::load_owner_vault_ids(&env, &vault.owner);
         Self::save_owner_vault_ids(&env, &vault.owner, &owner_ids, vault.check_in_interval);
         Self::log_passkey_usage(&env, vault_id, &passkey_hash, now);
+        // Issue #558: passkey audit trail
+        Self::log_passkey_audit_entry(&env, vault_id, "use", &caller, &passkey_hash);
         Self::record_check_in_history(&env, vault_id, now);
         Self::update_check_in_streak(&env, vault_id, &vault, now);
         Self::log_audit_entry(&env, vault_id, "check_in_pow", &caller, "");
