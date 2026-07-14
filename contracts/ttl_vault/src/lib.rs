@@ -19,7 +19,8 @@ use types::{
     CheckInHistoryEntry, CheckInStreak, ConditionalAcceptanceEntry, DataKey, DisputeStatus,
     GeoCheckInEntry, HibernationEntry, IntegrityReport, MetadataVersionEntry, MilestoneEntry,
     MilestoneVestingSchedule, MultiSigConfig, MultiSigOperation, MultiSigProposal, OwnershipProof,
-    OwnershipTransferRequest, PasskeyHash, PasskeyUsageEntry, PauseRecord,
+    OwnershipTransferRequest, PasskeyAuditEntry, PasskeyDelegation, PasskeyEscrowRecord,
+    PasskeyHash, PasskeyUsageEntry, PauseRecord,
     PendingBeneficiaryUpdate, ProofOfLifeEntry, ProposalStatus, ReleaseCondition, ReleaseEvent,
     ReleaseStatus, ReleaseVoteEntry, StateTransitionEntry, TokenCollateral, TokenConversion,
     TokenHedge, TokenLending, TokenRebalanceConfig, TokenStaking, TokenWeight, TtlBorrowRecord,
@@ -44,7 +45,9 @@ use types::{
     MULTISIG_PROPOSAL_EXPIRY, MULTISIG_PROPOSED_TOPIC, MULTISIG_REJECTED_TOPIC,
     MULTISIG_SIGNER_REMOVED_TOPIC, MULTISIG_VETOED_TOPIC, OWNERSHIP_ACCEPTED_TOPIC,
     OWNERSHIP_CANCELLED_TOPIC, OWNERSHIP_INITIATED_TOPIC, OWNERSHIP_PROOF_TOPIC, OWNERSHIP_TOPIC,
-    OWNERSHIP_TRANSFER_EXPIRED_TOPIC, PARTIAL_LIQUIDATE_TOPIC, PASSKEY_EXPIRY_EXTENDED_TOPIC,
+    OWNERSHIP_TRANSFER_EXPIRED_TOPIC, PARTIAL_LIQUIDATE_TOPIC, PASSKEY_DELEGATED_TOPIC,
+    PASSKEY_DELEGATION_REVOKED_TOPIC, PASSKEY_ESCROWED_TOPIC, PASSKEY_ESCROW_CANCELLED_TOPIC,
+    PASSKEY_ESCROW_RELEASED_TOPIC, PASSKEY_EXPIRY_EXTENDED_TOPIC,
     PASSKEY_LOCKOUT_TOPIC, PASSKEY_RECOVERED_TOPIC, PASSKEY_RECOVERY_INITIATED_TOPIC,
     PASSKEY_ROTATION_ENFORCED_TOPIC, PASSKEY_ROTATION_REQUIRED_TOPIC, PASSKEY_UNLOCKED_TOPIC,
     PASSKEY_EXPIRY_WARNING_TOPIC, PASSKEY_USAGE_TOPIC, PAUSE_TOPIC, PAUSE_VAULT_TOPIC,
@@ -106,11 +109,15 @@ mod beneficiary_vesting_tests;
 #[cfg(test)]
 mod bps_invariant_tests;
 #[cfg(test)]
+mod passkey_audit_tests;
+#[cfg(test)]
 mod lifecycle_tests;
 #[cfg(test)]
 mod passkey_expiry_notification_tests;
 #[cfg(test)]
 mod regression_tests;
+#[cfg(test)]
+mod passkey_delegation_tests;
 
 /// Minimum TTL (in ledgers) before a persistent entry is eligible for extension.
 /// At ~5 s/ledger this is ~83 minutes.
@@ -320,6 +327,10 @@ pub enum ContractError {
     InvalidPercentage = 110,
     // Amount exceeds the per-call percentage limit on partial liquidation.
     LiquidationExceedsLimit = 111,
+    // Issue #559: passkey escrow
+    AlreadyInEscrow = 112,
+    // Issue #559: check-in attempted with a passkey currently held in escrow
+    PasskeyInEscrow = 113,
 }
 
 #[contract]
@@ -1531,7 +1542,15 @@ impl TtlVaultContract {
         }
         let is_delegate =
             caller != vault.owner && Self::is_check_in_delegate(&env, vault_id, &caller);
-        if caller != vault.owner && !is_delegate {
+        // Issue #557: a caller holding a valid, non-expired delegation for this specific
+        // passkey may also check in on the owner's behalf. This is a separate, simpler
+        // mechanism than the general check-in delegate list above and is not subject to
+        // its nonce-replay protection, since the passkey hash itself is already validated
+        // below via `validate_passkey_for_checkin`.
+        let is_passkey_delegate = caller != vault.owner
+            && !is_delegate
+            && Self::is_valid_passkey_delegate(&env, vault_id, &passkey_hash, &caller);
+        if caller != vault.owner && !is_delegate && !is_passkey_delegate {
             return Err(ContractError::NotOwner);
         }
         // Enforce per-delegation nonce to prevent replay attacks
@@ -1648,6 +1667,8 @@ impl TtlVaultContract {
 
         // Log passkey usage - Issue #395
         Self::log_passkey_usage(&env, vault_id, &passkey_hash, now);
+        // Issue #558: passkey audit trail
+        Self::log_passkey_audit_entry(&env, vault_id, "use", &caller, &passkey_hash);
 
         // Persist last check-in time for rate limiting
         let lci_key = DataKey::LastCheckInTime(vault_id);
@@ -8804,6 +8825,15 @@ impl TtlVaultContract {
             }
         }
 
+        // Issue #559: block check-in while the passkey is held in escrow.
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::PasskeyEscrow(vault_id, passkey_hash.clone()))
+        {
+            return Err(ContractError::PasskeyInEscrow);
+        }
+
         // Expiry check — applies regardless of registration path.
         if let Some(expiry) = env
             .storage()
@@ -8848,6 +8878,65 @@ impl TtlVaultContract {
             (PASSKEY_USAGE_TOPIC, vault_id),
             (passkey_hash.clone(), timestamp),
         );
+    }
+
+    // --- Issue #558: Passkey Audit Trail ---
+
+    /// Appends an append-only audit entry for a passkey lifecycle operation
+    /// ("add" / "remove" / "use") to `PasskeyAuditLog(vault_id)` and emits
+    /// the `pk_audit` event.
+    fn log_passkey_audit_entry(
+        env: &Env,
+        vault_id: u64,
+        operation: &str,
+        actor: &Address,
+        passkey_hash: &BytesN<32>,
+    ) {
+        let key = DataKey::PasskeyAuditLog(vault_id);
+        let mut log: Vec<PasskeyAuditEntry> =
+            env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
+
+        let timestamp = env.ledger().timestamp();
+        log.push_back(PasskeyAuditEntry {
+            operation: String::from_str(env, operation),
+            actor: actor.clone(),
+            passkey_hash: passkey_hash.clone(),
+            timestamp,
+        });
+
+        env.storage().persistent().set(&key, &log);
+        let ttl = vault_ttl_ledgers(Self::load_vault(env, vault_id).check_in_interval);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, VAULT_TTL_THRESHOLD, ttl);
+
+        env.events().publish(
+            (PASSKEY_AUDIT_TOPIC, vault_id),
+            (
+                String::from_str(env, operation),
+                actor.clone(),
+                passkey_hash.clone(),
+                timestamp,
+            ),
+        );
+    }
+
+    /// Returns the full passkey audit trail for a vault.
+    ///
+    /// # Errors
+    /// * `ContractError::VaultNotFound` - If the vault does not exist.
+    pub fn get_passkey_audit_log(
+        env: Env,
+        vault_id: u64,
+    ) -> Result<Vec<PasskeyAuditEntry>, ContractError> {
+        if Self::try_load_vault(&env, vault_id).is_none() {
+            return Err(ContractError::VaultNotFound);
+        }
+        Ok(env
+            .storage()
+            .persistent()
+            .get(&DataKey::PasskeyAuditLog(vault_id))
+            .unwrap_or(Vec::new(&env)))
     }
 
     // --- Issue #383: Vault Recovery Mode ---
@@ -9332,6 +9421,10 @@ impl TtlVaultContract {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
+        // Issue #558: audit trail — rotation is recorded as a remove of the old
+        // hash followed by an add of the new hash, both at the current timestamp.
+        Self::log_passkey_audit_entry(&env, vault_id, "remove", &caller, &old_passkey_hash);
+        Self::log_passkey_audit_entry(&env, vault_id, "add", &caller, &new_passkey_hash);
         env.events().publish(
             (ROTATE_PASSKEY_TOPIC, vault_id),
             (old_passkey_hash, new_passkey_hash),
@@ -9517,6 +9610,7 @@ impl TtlVaultContract {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
+        Self::log_passkey_audit_entry(&env, vault_id, "add", &caller, &passkey_hash);
         env.events()
             .publish((ADD_PASSKEY_TOPIC, vault_id), passkey_hash);
         Ok(())
@@ -9698,6 +9792,8 @@ impl TtlVaultContract {
 
         // Log passkey usage and emit events
         Self::log_passkey_usage(&env, vault_id, &passkey_hash, now);
+        // Issue #558: passkey audit trail
+        Self::log_passkey_audit_entry(&env, vault_id, "use", &caller, &passkey_hash);
         env.events()
             .publish((BIO_CHECKIN_TOPIC, vault_id), (caller, now));
         Ok(())
@@ -9765,6 +9861,7 @@ impl TtlVaultContract {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
+        Self::log_passkey_audit_entry(&env, vault_id, "remove", &caller, &passkey_hash);
         env.events()
             .publish((REMOVE_PASSKEY_TOPIC, vault_id), passkey_hash);
         Ok(())
@@ -9809,6 +9906,269 @@ impl TtlVaultContract {
             }
         }
         false
+    }
+
+    // --- Issue #557: Passkey Delegation ---
+
+    /// Returns `true` if `addr` holds a valid (non-expired) delegation for `passkey_hash`.
+    fn is_valid_passkey_delegate(
+        env: &Env,
+        vault_id: u64,
+        passkey_hash: &BytesN<32>,
+        addr: &Address,
+    ) -> bool {
+        let key = DataKey::PasskeyDelegation(vault_id, passkey_hash.clone());
+        if let Some(delegation) = env.storage().persistent().get::<DataKey, PasskeyDelegation>(&key) {
+            if &delegation.delegate == addr && delegation.expires_at > env.ledger().timestamp() {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Grants `delegate` the right to perform check-ins on behalf of the vault owner
+    /// using the specific passkey `passkey_hash`, until `expires_at`.
+    ///
+    /// Only the vault owner can call this. The passkey must already be registered
+    /// on the vault via `add_passkey`.
+    ///
+    /// # Errors
+    /// * `ContractError::NotOwner` - If caller is not the vault owner
+    /// * `ContractError::AlreadyReleased` - If vault is not in Locked status
+    /// * `ContractError::PasskeyNotFound` - If `passkey_hash` is not registered
+    /// * `ContractError::InvalidInterval` - If `expires_at` is not in the future
+    /// * `ContractError::InvalidBeneficiary` - If `delegate` equals the owner
+    pub fn delegate_passkey(
+        env: Env,
+        vault_id: u64,
+        caller: Address,
+        passkey_hash: BytesN<32>,
+        delegate: Address,
+        expires_at: u64,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        let vault = Self::load_vault(&env, vault_id);
+        if caller != vault.owner {
+            return Err(ContractError::NotOwner);
+        }
+        if vault.status != ReleaseStatus::Locked {
+            return Err(ContractError::AlreadyReleased);
+        }
+        if !Self::is_valid_passkey(env.clone(), vault_id, passkey_hash.clone()) {
+            return Err(ContractError::PasskeyNotFound);
+        }
+        if expires_at <= env.ledger().timestamp() {
+            return Err(ContractError::InvalidInterval);
+        }
+        if delegate == vault.owner {
+            return Err(ContractError::InvalidBeneficiary);
+        }
+
+        let key = DataKey::PasskeyDelegation(vault_id, passkey_hash.clone());
+        let delegation = PasskeyDelegation {
+            delegate: delegate.clone(),
+            expires_at,
+        };
+        env.storage().persistent().set(&key, &delegation);
+        let ttl = vault_ttl_ledgers(vault.check_in_interval);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, VAULT_TTL_THRESHOLD, ttl);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
+        env.events().publish(
+            (PASSKEY_DELEGATED_TOPIC, vault_id),
+            (passkey_hash, delegate, expires_at),
+        );
+        Ok(())
+    }
+
+    /// Revokes any existing passkey delegation for `passkey_hash` on `vault_id`.
+    ///
+    /// Only the vault owner can call this. A no-op (still `Ok`) if no delegation exists.
+    ///
+    /// # Errors
+    /// * `ContractError::NotOwner` - If caller is not the vault owner
+    pub fn revoke_passkey_delegation(
+        env: Env,
+        vault_id: u64,
+        caller: Address,
+        passkey_hash: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        let vault = Self::load_vault(&env, vault_id);
+        if caller != vault.owner {
+            return Err(ContractError::NotOwner);
+        }
+
+        let key = DataKey::PasskeyDelegation(vault_id, passkey_hash.clone());
+        if let Some(delegation) = env.storage().persistent().get::<DataKey, PasskeyDelegation>(&key) {
+            env.storage().persistent().remove(&key);
+            env.storage()
+                .instance()
+                .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
+            env.events().publish(
+                (PASSKEY_DELEGATION_REVOKED_TOPIC, vault_id),
+                (passkey_hash, delegation.delegate),
+            );
+        }
+        Ok(())
+    }
+
+    /// Returns the active passkey delegation for `(vault_id, passkey_hash)`, if any.
+    pub fn get_passkey_delegation(
+        env: Env,
+        vault_id: u64,
+        passkey_hash: BytesN<32>,
+    ) -> Option<PasskeyDelegation> {
+        let key = DataKey::PasskeyDelegation(vault_id, passkey_hash);
+        env.storage().persistent().get(&key)
+    }
+
+    // --- Issue #559: Passkey Escrow ---
+
+    /// Places a passkey in escrow with a designated recovery contact.
+    ///
+    /// While escrowed, the Owner cannot use this passkey for check-in. Only the
+    /// `recovery_contact` can release it (via [`release_escrow_passkey`]), or the
+    /// Owner can cancel the escrow themselves (via [`cancel_passkey_escrow`]).
+    ///
+    /// # Errors
+    /// * `ContractError::NotOwner` - If caller is not the vault owner
+    /// * `ContractError::AlreadyReleased` - If vault is not in Locked status
+    /// * `ContractError::PasskeyNotFound` - If passkey is not registered for the vault
+    /// * `ContractError::InvalidBeneficiary` - If recovery_contact equals the owner
+    /// * `ContractError::AlreadyInEscrow` - If the passkey is already in escrow
+    pub fn escrow_passkey(
+        env: Env,
+        vault_id: u64,
+        caller: Address,
+        passkey_hash: BytesN<32>,
+        recovery_contact: Address,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        let vault = Self::load_vault(&env, vault_id);
+        if caller != vault.owner {
+            return Err(ContractError::NotOwner);
+        }
+        if vault.status != ReleaseStatus::Locked {
+            return Err(ContractError::AlreadyReleased);
+        }
+        if recovery_contact == vault.owner {
+            return Err(ContractError::InvalidBeneficiary);
+        }
+
+        let pk_key = DataKey::VaultPasskeys(vault_id);
+        let passkeys: Vec<PasskeyHash> = env
+            .storage()
+            .persistent()
+            .get(&pk_key)
+            .unwrap_or_else(|| Vec::new(&env));
+        if !passkeys.iter().any(|p| p.hash == passkey_hash) {
+            return Err(ContractError::PasskeyNotFound);
+        }
+
+        let escrow_key = DataKey::PasskeyEscrow(vault_id, passkey_hash.clone());
+        if env.storage().persistent().has(&escrow_key) {
+            return Err(ContractError::AlreadyInEscrow);
+        }
+
+        let now = env.ledger().timestamp();
+        let record = PasskeyEscrowRecord {
+            recovery_contact: recovery_contact.clone(),
+            escrowed_at: now,
+        };
+        env.storage().persistent().set(&escrow_key, &record);
+        let ttl = vault_ttl_ledgers(vault.check_in_interval);
+        env.storage()
+            .persistent()
+            .extend_ttl(&escrow_key, VAULT_TTL_THRESHOLD, ttl);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
+        env.events().publish(
+            (PASSKEY_ESCROWED_TOPIC, vault_id),
+            (passkey_hash, recovery_contact),
+        );
+        Ok(())
+    }
+
+    /// Releases a passkey from escrow, restoring it to active status.
+    ///
+    /// Only the `recovery_contact` stored in the Escrow_Record may call this.
+    ///
+    /// # Errors
+    /// * `ContractError::PasskeyNotFound` - If no escrow record exists for this passkey
+    /// * `ContractError::NotRecoveryContact` - If caller is not the recovery contact
+    pub fn release_escrow_passkey(
+        env: Env,
+        vault_id: u64,
+        caller: Address,
+        passkey_hash: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        let escrow_key = DataKey::PasskeyEscrow(vault_id, passkey_hash.clone());
+        let record: PasskeyEscrowRecord = env
+            .storage()
+            .persistent()
+            .get(&escrow_key)
+            .ok_or(ContractError::PasskeyNotFound)?;
+        if caller != record.recovery_contact {
+            return Err(ContractError::NotRecoveryContact);
+        }
+
+        env.storage().persistent().remove(&escrow_key);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
+        env.events().publish(
+            (PASSKEY_ESCROW_RELEASED_TOPIC, vault_id),
+            (passkey_hash, record.recovery_contact),
+        );
+        Ok(())
+    }
+
+    /// Cancels an escrow, restoring the passkey to active status. Owner-only.
+    ///
+    /// # Errors
+    /// * `ContractError::NotOwner` - If caller is not the vault owner
+    /// * `ContractError::PasskeyNotFound` - If no escrow record exists for this passkey
+    pub fn cancel_passkey_escrow(
+        env: Env,
+        vault_id: u64,
+        caller: Address,
+        passkey_hash: BytesN<32>,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        let vault = Self::load_vault(&env, vault_id);
+        if caller != vault.owner {
+            return Err(ContractError::NotOwner);
+        }
+
+        let escrow_key = DataKey::PasskeyEscrow(vault_id, passkey_hash.clone());
+        if !env.storage().persistent().has(&escrow_key) {
+            return Err(ContractError::PasskeyNotFound);
+        }
+        env.storage().persistent().remove(&escrow_key);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
+        env.events()
+            .publish((PASSKEY_ESCROW_CANCELLED_TOPIC, vault_id), passkey_hash);
+        Ok(())
+    }
+
+    /// Returns the escrow record for a given `(vault_id, passkey_hash)`, or `None`
+    /// if the passkey is not in escrow.
+    pub fn get_passkey_escrow(
+        env: Env,
+        vault_id: u64,
+        passkey_hash: BytesN<32>,
+    ) -> Option<PasskeyEscrowRecord> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PasskeyEscrow(vault_id, passkey_hash))
     }
 
     // --- Issue #934: Emergency Vault Recovery Code ---
@@ -11569,6 +11929,8 @@ impl TtlVaultContract {
             Self::record_check_in_history(&env, vault_id, now);
             Self::update_check_in_streak(&env, vault_id, &vault, now);
             Self::log_passkey_usage(&env, vault_id, &passkey_hash, now);
+            // Issue #558: passkey audit trail
+            Self::log_passkey_audit_entry(&env, vault_id, "use", &caller, &passkey_hash);
             env.events().publish((CHECK_IN_TOPIC, vault_id), now);
         }
         env.storage()
@@ -11777,6 +12139,8 @@ impl TtlVaultContract {
         let owner_ids = Self::load_owner_vault_ids(&env, &vault.owner);
         Self::save_owner_vault_ids(&env, &vault.owner, &owner_ids, vault.check_in_interval);
         Self::log_passkey_usage(&env, vault_id, &passkey_hash, now);
+        // Issue #558: passkey audit trail
+        Self::log_passkey_audit_entry(&env, vault_id, "use", &caller, &passkey_hash);
         Self::record_check_in_history(&env, vault_id, now);
         Self::update_check_in_streak(&env, vault_id, &vault, now);
         Self::log_audit_entry(&env, vault_id, "check_in_pow", &caller, "");

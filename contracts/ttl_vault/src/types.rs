@@ -42,6 +42,11 @@ pub const INHERITANCE_TOPIC: Symbol = symbol_short!("inherit");
 pub const ADD_PASSKEY_TOPIC: Symbol = symbol_short!("add_pk");
 pub const REMOVE_PASSKEY_TOPIC: Symbol = symbol_short!("rm_pk");
 pub const ROTATE_PASSKEY_TOPIC: Symbol = symbol_short!("rot_pk");
+// Issue #559: passkey escrow. `symbol_short!` caps at 9 chars, so the cancel
+// topic is truncated from the spec's conceptual "pk_esc_can" to "pk_esccan".
+pub const PASSKEY_ESCROWED_TOPIC: Symbol = symbol_short!("pk_esc");
+pub const PASSKEY_ESCROW_RELEASED_TOPIC: Symbol = symbol_short!("pk_escrel");
+pub const PASSKEY_ESCROW_CANCELLED_TOPIC: Symbol = symbol_short!("pk_esccan");
 pub const BACKUP_CODE_USED_TOPIC: Symbol = symbol_short!("bk_used");
 pub const BACKUP_CODES_GENERATED_TOPIC: Symbol = symbol_short!("bk_gen");
 pub const DELEGATE_BENEFICIARY_TOPIC: Symbol = symbol_short!("del_ben");
@@ -177,9 +182,14 @@ pub const PASSKEY_RECOVERED_TOPIC: Symbol = symbol_short!("pk_rcvd");
 // Issue #562: passkey compromise response
 pub const PASSKEY_LOCKOUT_TOPIC: Symbol = symbol_short!("pk_lock");
 pub const PASSKEY_UNLOCKED_TOPIC: Symbol = symbol_short!("pk_unlk");
+// Issue #558: passkey audit trail
+pub const PASSKEY_AUDIT_TOPIC: Symbol = symbol_short!("pk_audit");
 // Issue #561: passkey rotation enforcement
 pub const PASSKEY_ROTATION_REQUIRED_TOPIC: Symbol = symbol_short!("pk_rot_r");
 pub const PASSKEY_ROTATION_ENFORCED_TOPIC: Symbol = symbol_short!("pk_rot_e");
+// Issue #557: passkey delegation
+pub const PASSKEY_DELEGATED_TOPIC: Symbol = symbol_short!("pk_del");
+pub const PASSKEY_DELEGATION_REVOKED_TOPIC: Symbol = symbol_short!("pk_del_rv");
 
 // Issue: TTL Borrowing
 pub const TTL_BORROW_TOPIC: Symbol = symbol_short!("ttl_bor");
@@ -524,6 +534,12 @@ pub enum DataKey {
     WithdrawalAuditLog(u64),
     // Issue #574: withdrawal rollback
     WithdrawalRollback(u64),
+    // Issue #557: passkey delegation
+    PasskeyDelegation(u64, BytesN<32>),
+    // Issue #559: passkey escrow
+    PasskeyEscrow(u64, BytesN<32>),
+    // Issue #558: passkey audit trail
+    PasskeyAuditLog(u64),
 }
 
 /// Check-in history entry for TTL prediction - Issue #482
@@ -735,6 +751,23 @@ pub struct PasskeyHash {
     pub biometric_hash: Option<Bytes>,
 }
 
+/// A time-bounded grant letting `delegate` perform check-ins on behalf of the
+/// vault owner using one specific passkey - Issue #557.
+#[contracttype]
+#[derive(Clone)]
+pub struct PasskeyDelegation {
+    pub delegate: Address,
+    pub expires_at: u64,
+}
+
+/// Passkey escrow record - Issue #559
+#[contracttype]
+#[derive(Clone)]
+pub struct PasskeyEscrowRecord {
+    pub recovery_contact: Address,
+    pub escrowed_at: u64,
+}
+
 /// Backup code entry - Issue #393
 #[contracttype]
 #[derive(Clone)]
@@ -855,6 +888,16 @@ pub struct Vault {
     pub burn_percentage: u32,
     /// Address that receives inactivity penalty transfers
     pub penalty_recipient: Option<Address>,
+}
+
+/// Passkey audit trail entry - Issue #558
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PasskeyAuditEntry {
+    pub operation: String,
+    pub actor: Address,
+    pub passkey_hash: BytesN<32>,
+    pub timestamp: u64,
 }
 
 /// Passkey usage entry for tracking check-ins - Issue #395
