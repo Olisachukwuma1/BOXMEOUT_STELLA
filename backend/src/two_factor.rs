@@ -1,3 +1,9 @@
+// These handlers use axum extractors (State/Path/Json) but are not yet
+// registered on any Router (see main.rs::build_router) or documented in
+// docs/openapi.yaml — 2FA is scaffolded but not a live endpoint today. Kept
+// async so the signatures need no rework once/if they're wired up.
+#![allow(clippy::unused_async)]
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -28,11 +34,11 @@ struct PendingOtp {
     expires_at: u64,
 }
 
-static PENDING_OTPS: once_cell::sync::Lazy<Mutex<HashMap<String, Vec<PendingOtp>>>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
+static PENDING_OTPS: std::sync::LazyLock<Mutex<HashMap<String, Vec<PendingOtp>>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
-static SESSION_VERIFIED: once_cell::sync::Lazy<Mutex<HashMap<String, bool>>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
+static SESSION_VERIFIED: std::sync::LazyLock<Mutex<HashMap<String, bool>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -75,15 +81,13 @@ fn generate_provisioning_uri(secret: &str, label: &str) -> String {
         })
         .collect();
     format!(
-        "otpauth://totp/{}?secret={}&issuer=Ethos-Protocol&algorithm=SHA1&digits=6&period=30",
-        encoded_label, secret
+        "otpauth://totp/{encoded_label}?secret={secret}&issuer=Ethos-Protocol&algorithm=SHA1&digits=6&period=30"
     )
 }
 
 fn verify_totp_code(secret: &str, code: &str) -> bool {
-    let secret_bytes = match base32_decode(secret) {
-        Some(b) => b,
-        None => return false,
+    let Some(secret_bytes) = base32_decode(secret) else {
+        return false;
     };
 
     let now = SystemTime::now()
@@ -103,9 +107,8 @@ fn verify_totp_code(secret: &str, code: &str) -> bool {
         };
 
         let counter_be = counter.to_be_bytes();
-        let mut mac = match Hmac::<Sha1>::new_from_slice(&secret_bytes) {
-            Ok(m) => m,
-            Err(_) => return false,
+        let Ok(mut mac) = Hmac::<Sha1>::new_from_slice(&secret_bytes) else {
+            return false;
         };
         mac.update(&counter_be);
         let result = mac.finalize();
@@ -118,7 +121,7 @@ fn verify_totp_code(secret: &str, code: &str) -> bool {
             | (hash[offset + 3] as u32);
         let totp = binary % 1_000_000;
 
-        if format!("{:06}", totp) == code {
+        if format!("{totp:06}") == code {
             return true;
         }
     }
@@ -210,14 +213,14 @@ pub async fn enable_2fa(
 ) -> Result<Json<Enable2FAResponse>, AppError> {
     match &body.method {
         TwoFactorMethod::Sms => {
-            if body.phone.as_ref().map_or(true, |p| p.trim().is_empty()) {
+            if body.phone.as_ref().is_none_or(|p| p.trim().is_empty()) {
                 return Err(AppError::InvalidInput(
                     "phone is required for SMS 2FA".into(),
                 ));
             }
         }
         TwoFactorMethod::Email => {
-            if body.email.as_ref().map_or(true, |e| e.trim().is_empty()) {
+            if body.email.as_ref().is_none_or(|e| e.trim().is_empty()) {
                 return Err(AppError::InvalidInput(
                     "email is required for Email 2FA".into(),
                 ));

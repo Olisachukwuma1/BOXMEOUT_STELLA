@@ -4,8 +4,7 @@ use axum::{
     body::Body,
     extract::State,
     http::{HeaderValue, Method, Request, StatusCode},
-    middleware,
-    routing::{delete, get, post},
+    routing::{get, post},
     Json, Router,
 };
 use chrono::TimeZone;
@@ -407,9 +406,9 @@ async fn test_cors_rejected_origin() {
         .unwrap();
 
     let origin_header = res.headers().get("access-control-allow-origin");
-    match origin_header {
-        Some(val) => assert_ne!(val, "http://evil.com"),
-        None => {} // No header is also acceptable
+    // No header is also acceptable.
+    if let Some(val) = origin_header {
+        assert_ne!(val, "http://evil.com");
     }
 }
 
@@ -795,7 +794,7 @@ mod simulator_tests {
         assert_eq!(result.scenario, ScenarioType::MissedCheckInDates);
         // 1 hour TTL + 1 day missed = 1 day + 1 hour
         let expected = ttl_remaining + check_in_interval;
-        assert_eq!(result.seconds_until_release, expected as i64);
+        assert_eq!(result.seconds_until_release, expected.cast_signed());
         assert_eq!(result.confidence, "medium");
     }
 
@@ -813,7 +812,7 @@ mod simulator_tests {
         );
 
         let expected = ttl_remaining + 2 * check_in_interval;
-        assert_eq!(result.seconds_until_release, expected as i64);
+        assert_eq!(result.seconds_until_release, expected.cast_signed());
         assert_eq!(result.confidence, "medium");
     }
 
@@ -838,7 +837,7 @@ mod simulator_tests {
             0,
         );
         let expected = ttl_remaining + check_in_interval;
-        assert_eq!(result.seconds_until_release, expected as i64);
+        assert_eq!(result.seconds_until_release, expected.cast_signed());
     }
 
     // ── simulate_release_handler ─────────────────────────────────────────────

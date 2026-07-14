@@ -332,7 +332,7 @@ impl NotificationService {
             return;
         } // already past warning threshold
 
-        let fire_at = Utc::now() + chrono::Duration::seconds((ttl - warning_secs) as i64);
+        let fire_at = Utc::now() + chrono::Duration::seconds((ttl - warning_secs).cast_signed());
 
         // Avoid duplicate schedules for the same vault + type
         let mut store = self.schedule.lock().unwrap();
@@ -373,9 +373,10 @@ impl NotificationService {
         let enabled = match notification_type {
             NotificationType::VaultReleased => prefs.vault_released_enabled,
             NotificationType::CheckInReminder => prefs.check_in_reminder_enabled,
-            NotificationType::ExpiryWarning | NotificationType::VaultPaused => true,
+            NotificationType::ExpiryWarning
+            | NotificationType::VaultPaused
+            | NotificationType::PasskeyExpired => true,
             NotificationType::PasskeyExpiringSoon => prefs.expiry_warning_enabled,
-            NotificationType::PasskeyExpired => true,
         };
 
         if !enabled {
@@ -444,7 +445,7 @@ impl NotificationService {
         }
 
         // AC 3: only schedule once remaining time is within the warning threshold.
-        let threshold_secs = (prefs.warning_hours_before * 3600) as i64;
+        let threshold_secs = (prefs.warning_hours_before * 3600).cast_signed();
         if remaining_secs > threshold_secs {
             return;
         }
@@ -509,7 +510,7 @@ impl NotificationService {
                 && n.owner == notif.owner
                 && n.notification_type == notif.notification_type
                 && n.passkey_hash == notif.passkey_hash
-                && n.sent_at.map_or(false, |t| t > cutoff)
+                && n.sent_at.is_some_and(|t| t > cutoff)
         })
     }
 
@@ -542,7 +543,7 @@ impl NotificationService {
             .unwrap()
             .values()
             .filter(|l| {
-                l.status == DeliveryStatus::Retrying && l.next_retry_at.map_or(false, |t| t <= now)
+                l.status == DeliveryStatus::Retrying && l.next_retry_at.is_some_and(|t| t <= now)
             })
             .cloned()
             .collect();
@@ -578,13 +579,12 @@ impl NotificationService {
             return;
         }
 
-        let (title, body, data) =
-            notification_content(
-                &notif.notification_type,
-                &notif.vault_id,
-                notif.ttl_hours,
-                notif.passkey_hash.as_deref(),
-            );
+        let (title, body, data) = notification_content(
+            &notif.notification_type,
+            &notif.vault_id,
+            notif.ttl_hours,
+            notif.passkey_hash.as_deref(),
+        );
 
         let mut last_err = String::new();
         let mut any_ok = false;
@@ -612,7 +612,7 @@ impl NotificationService {
             let max_attempts = notif.max_retry_attempts;
             if next_attempt < max_attempts && (next_attempt as usize) < RETRY_DELAYS_SECS.len() {
                 let delay = RETRY_DELAYS_SECS[next_attempt as usize];
-                let next_at = Utc::now() + chrono::Duration::seconds(delay as i64);
+                let next_at = Utc::now() + chrono::Duration::seconds(delay.cast_signed());
                 self.record(notif, DeliveryStatus::Retrying, &last_err);
                 self.mark_sent(&notif.id, DeliveryStatus::Retrying);
                 self.update_retry_log_with_next(
@@ -765,7 +765,7 @@ impl NotificationService {
             .lock()
             .unwrap()
             .get(owner)
-            .map_or(false, |p| p.unsubscribed)
+            .is_some_and(|p| p.unsubscribed)
     }
 
     // ── Email template with unsubscribe link (#828) ─────────────────────────
@@ -898,13 +898,12 @@ impl NotificationService {
                 if tokens.is_empty() {
                     return false;
                 }
-                let (title, body, data) =
-                    notification_content(
-                &notif.notification_type,
-                &notif.vault_id,
-                notif.ttl_hours,
-                notif.passkey_hash.as_deref(),
-            );
+                let (title, body, data) = notification_content(
+                    &notif.notification_type,
+                    &notif.vault_id,
+                    notif.ttl_hours,
+                    notif.passkey_hash.as_deref(),
+                );
                 for device in &tokens {
                     if self
                         .fcm
@@ -1263,8 +1262,12 @@ mod tests {
 
     #[test]
     fn notification_content_passkey_expired() {
-        let (title, body, _data) =
-            notification_content(&NotificationType::PasskeyExpired, "v1", None, Some("aabbccdd"));
+        let (title, body, _data) = notification_content(
+            &NotificationType::PasskeyExpired,
+            "v1",
+            None,
+            Some("aabbccdd"),
+        );
         assert!(title.contains("Passkey"));
         assert!(body.contains("expired"));
     }
@@ -1305,7 +1308,10 @@ mod tests {
 
         let pending = svc.get_pending_notifications();
         assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].notification_type, NotificationType::PasskeyExpired);
+        assert_eq!(
+            pending[0].notification_type,
+            NotificationType::PasskeyExpired
+        );
         assert_eq!(pending[0].passkey_hash.as_deref(), Some("hash1"));
     }
 
@@ -1367,7 +1373,10 @@ mod tests {
 
         let pending = svc.get_pending_notifications();
         assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].notification_type, NotificationType::PasskeyExpired);
+        assert_eq!(
+            pending[0].notification_type,
+            NotificationType::PasskeyExpired
+        );
     }
 
     #[test]
@@ -1394,7 +1403,9 @@ mod tests {
             .iter()
             .any(|n| n.passkey_hash.as_deref() == Some("hash2")
                 && n.notification_type == NotificationType::PasskeyExpired));
-        assert!(!pending.iter().any(|n| n.passkey_hash.as_deref() == Some("hash3")));
+        assert!(!pending
+            .iter()
+            .any(|n| n.passkey_hash.as_deref() == Some("hash3")));
     }
 
     // Retry logic

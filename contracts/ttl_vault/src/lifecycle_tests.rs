@@ -194,7 +194,7 @@ fn test_full_lifecycle_with_hibernation() {
 /// Owner can partially liquidate up to the percentage cap, balance is debited correctly
 #[test]
 fn test_partial_liquidate_within_limit_succeeds() {
-    let (env, owner, beneficiary, _token_address, client) = setup_lifecycle();
+    let (_env, owner, beneficiary, _token_address, client) = setup_lifecycle();
     let interval = 10_000u64;
     let vault_id = client.create_vault(&owner, &beneficiary, &interval, &None);
     client.deposit(&vault_id, &owner, &1_000_000i128);
@@ -211,7 +211,7 @@ fn test_partial_liquidate_within_limit_succeeds() {
 /// Owner requesting more than the percentage cap is rejected
 #[test]
 fn test_partial_liquidate_exceeds_limit_rejected() {
-    let (env, owner, beneficiary, _token_address, client) = setup_lifecycle();
+    let (_env, owner, beneficiary, _token_address, client) = setup_lifecycle();
     let interval = 10_000u64;
     let vault_id = client.create_vault(&owner, &beneficiary, &interval, &None);
     client.deposit(&vault_id, &owner, &1_000_000i128);
@@ -276,7 +276,7 @@ fn test_partial_liquidate_then_check_in_resets_ttl() {
 /// percentage_allowed = 0 is rejected; percentage_allowed > 100 is rejected
 #[test]
 fn test_partial_liquidate_invalid_percentage_rejected() {
-    let (env, owner, beneficiary, _token_address, client) = setup_lifecycle();
+    let (_env, owner, beneficiary, _token_address, client) = setup_lifecycle();
     let interval = 10_000u64;
     let vault_id = client.create_vault(&owner, &beneficiary, &interval, &None);
     client.deposit(&vault_id, &owner, &1_000_000i128);

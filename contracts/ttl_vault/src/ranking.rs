@@ -200,8 +200,7 @@ mod tests {
             topics
                 .get(0)
                 .and_then(|topic| topic.try_into_val(&env).ok())
-                .map(|topic: soroban_sdk::Symbol| topic == RANKING_SET_TOPIC)
-                .unwrap_or(false)
+                .is_some_and(|topic: soroban_sdk::Symbol| topic == RANKING_SET_TOPIC)
         }));
     }
 }

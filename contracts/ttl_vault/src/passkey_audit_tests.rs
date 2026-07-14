@@ -160,8 +160,7 @@ fn test_pk_audit_event_emitted() {
         topics
             .get(0)
             .and_then(|v| v.try_into_val(&env).ok())
-            .map(|s: soroban_sdk::Symbol| s == PASSKEY_AUDIT_TOPIC)
-            .unwrap_or(false)
+            .is_some_and(|s: soroban_sdk::Symbol| s == PASSKEY_AUDIT_TOPIC)
     });
     assert!(found, "expected a pk_audit event to be emitted");
 }

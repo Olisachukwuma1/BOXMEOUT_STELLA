@@ -1,8 +1,10 @@
+#[cfg(test)]
+use crate::models::VaultStatus;
 use crate::models::{
     AuditEntry, AuditLogEntry, AuditLogQuery, Channel, Frequency, ReminderPreferences, SearchQuery,
     SearchResult, ShareToken, Subscription, SubscriptionChannel, SubscriptionFrequency,
     TwoFactorConfig, TwoFactorMethod, Vault, VaultBackup, VaultEvent, VaultNotificationPreferences,
-    VaultShare, VaultStatus,
+    VaultShare,
 };
 
 use chrono::Utc;
@@ -142,7 +144,7 @@ pub fn get_vault_audit_log(audit_store: &AuditStore, vault_id: &str) -> Vec<Audi
         .filter(|a| {
             a.details
                 .get("vault_id")
-                .map_or(false, |v| v.as_str() == Some(vault_id))
+                .is_some_and(|v| v.as_str() == Some(vault_id))
         })
         .cloned()
         .collect()
@@ -318,7 +320,7 @@ pub fn get_notification_preferences(
 
 // ── TTL Insurance persistence (SQLite) ───────────────────────────────────────
 
-use crate::models::{OwnerActivity, PurchaseTtlInsuranceRequest, TtlInsurancePolicy};
+use crate::models::TtlInsurancePolicy;
 
 impl Db {
     pub fn upsert_insurance_policy(
@@ -329,10 +331,10 @@ impl Db {
         let purchased_at = policy.purchased_at.to_rfc3339();
         let last_extended_at = policy.last_extended_at.map(|d| d.to_rfc3339());
 
-        let enabled_i = if policy.enabled { 1i64 } else { 0i64 };
+        let enabled_i = i64::from(policy.enabled);
 
         self.conn.lock().unwrap().execute(
-            r#"
+            r"
             INSERT INTO ttl_insurance_policies (
                 vault_id,
                 extension_seconds,
@@ -347,11 +349,11 @@ impl Db {
                 enabled = excluded.enabled,
                 purchased_at = excluded.purchased_at,
                 last_extended_at = excluded.last_extended_at
-            "#,
+            ",
             params![
-                policy.vault_id as i64,
-                policy.extension_seconds as i64,
-                policy.inactivity_threshold_seconds as i64,
+                policy.vault_id.cast_signed(),
+                policy.extension_seconds.cast_signed(),
+                policy.inactivity_threshold_seconds.cast_signed(),
                 enabled_i,
                 purchased_at,
                 last_extended_at,
@@ -367,14 +369,14 @@ impl Db {
     ) -> Result<Option<TtlInsurancePolicy>, rusqlite::Error> {
         let binding = self.conn.lock().unwrap();
         let mut stmt = binding.prepare(
-            r#"
+            r"
             SELECT vault_id, extension_seconds, inactivity_threshold_seconds, enabled, purchased_at, last_extended_at
             FROM ttl_insurance_policies
             WHERE vault_id = ?1
-            "#,
+            ",
         )?;
 
-        let row_res = stmt.query_row(params![vault_id as i64], |r| {
+        let row_res = stmt.query_row(params![vault_id.cast_signed()], |r| {
             let purchased_at_str: String = r.get(4)?;
             let purchased_at = chrono::DateTime::parse_from_rfc3339(&purchased_at_str)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
@@ -428,13 +430,13 @@ impl Db {
         last_active_at: chrono::DateTime<chrono::Utc>,
     ) -> Result<(), rusqlite::Error> {
         self.conn.lock().unwrap().execute(
-            r#"
+            r"
             INSERT INTO owner_activity (owner_id, last_active_at)
             VALUES (?1, ?2)
             ON CONFLICT(owner_id) DO UPDATE SET
                 last_active_at = excluded.last_active_at
-            "#,
-            params![owner_id as i64, last_active_at.to_rfc3339(),],
+            ",
+            params![owner_id.cast_signed(), last_active_at.to_rfc3339(),],
         )?;
         Ok(())
     }
@@ -445,15 +447,15 @@ impl Db {
     ) -> Result<Option<chrono::DateTime<chrono::Utc>>, rusqlite::Error> {
         let binding = self.conn.lock().unwrap();
         let mut stmt = binding.prepare(
-            r#"
+            r"
             SELECT last_active_at
             FROM owner_activity
             WHERE owner_id = ?1
-            "#,
+            ",
         )?;
 
         let row_res: Result<String, rusqlite::Error> =
-            stmt.query_row(params![owner_id as i64], |r| r.get(0));
+            stmt.query_row(params![owner_id.cast_signed()], |r| r.get(0));
 
         match row_res {
             Ok(s) => {
@@ -478,11 +480,11 @@ impl Db {
     ) -> Result<Vec<TtlInsurancePolicy>, rusqlite::Error> {
         let binding = self.conn.lock().unwrap();
         let mut stmt = binding.prepare(
-            r#"
+            r"
             SELECT vault_id, extension_seconds, inactivity_threshold_seconds, enabled, purchased_at, last_extended_at
             FROM ttl_insurance_policies
             WHERE enabled = 1
-            "#,
+            ",
         )?;
 
         let iter = stmt.query_map([], |r| {
@@ -573,6 +575,10 @@ impl PoolConfig {
 
 pub struct Db {
     conn: std::sync::Mutex<Connection>,
+    // DB_POOL_MIN/DB_POOL_MAX are accepted for forward compatibility but unused:
+    // `conn` is a single mutex-guarded connection, not a real pool. Only
+    // `timeout_secs` (DB_POOL_TIMEOUT_SECS) is currently applied, via busy_timeout.
+    #[allow(dead_code)]
     pool_config: PoolConfig,
     /// In-memory vault store shared across the application.
     pub vault_store: VaultStore,
@@ -628,7 +634,7 @@ impl Db {
         const MIGRATIONS: &[(&str, &str)] = &[
             (
                 "1",
-                r#"
+                r"
                 CREATE TABLE IF NOT EXISTS reminder_preferences (
                     vault_id             INTEGER PRIMARY KEY,
                     channels             TEXT NOT NULL,
@@ -661,7 +667,7 @@ impl Db {
                 CREATE TABLE IF NOT EXISTS unsubscribed_users (
                     owner TEXT PRIMARY KEY
                 );
-                "#,
+                ",
             ),
             (
                 "2",
@@ -669,7 +675,7 @@ impl Db {
             ),
             (
                 "3",
-                r#"
+                r"
                 CREATE TABLE IF NOT EXISTS audit_logs (
                     id         INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp  TEXT NOT NULL,
@@ -683,11 +689,11 @@ impl Db {
                 CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id   ON audit_logs(user_id);
                 CREATE INDEX IF NOT EXISTS idx_audit_logs_action    ON audit_logs(action);
-                "#,
+                ",
             ),
             (
                 "4",
-                r#"
+                r"
                 CREATE TABLE IF NOT EXISTS two_factor_config (
                     vault_id     TEXT PRIMARY KEY,
                     method       TEXT NOT NULL,
@@ -698,18 +704,18 @@ impl Db {
                     created_at   TEXT NOT NULL,
                     verified_at  TEXT
                 );
-                "#,
+                ",
             ),
             (
                 "5",
-                r#"
+                r"
                 CREATE TABLE IF NOT EXISTS vault_subscriptions (
                     vault_id   INTEGER PRIMARY KEY,
                     owner      TEXT NOT NULL,
                     channels   TEXT NOT NULL,
                     frequency  TEXT NOT NULL
                 );
-                "#,
+                ",
             ),
         ];
 
@@ -724,7 +730,9 @@ impl Db {
                 .unwrap_or(false)
             };
 
-            if !already_applied {
+            if already_applied {
+                tracing::debug!(version = version, "migration already applied, skipping");
+            } else {
                 tracing::info!(version = version, "applying migration");
                 self.conn.lock().unwrap().execute_batch(sql)?;
                 self.conn.lock().unwrap().execute(
@@ -732,8 +740,6 @@ impl Db {
                     params![version, chrono::Utc::now().to_rfc3339()],
                 )?;
                 tracing::info!(version = version, "migration applied successfully");
-            } else {
-                tracing::debug!(version = version, "migration already applied, skipping");
             }
         }
 
@@ -743,7 +749,7 @@ impl Db {
     pub fn upsert(&self, prefs: &ReminderPreferences) -> Result<(), rusqlite::Error> {
         let channels_json = serde_json::to_string(&prefs.channels).unwrap();
         self.conn.lock().unwrap().execute(
-            r#"
+            r"
             INSERT INTO reminder_preferences (vault_id, channels, hours_before_expiry, frequency)
             VALUES (?1, ?2, ?3, ?4)
             ON CONFLICT(vault_id) DO UPDATE SET
@@ -751,9 +757,9 @@ impl Db {
               hours_before_expiry = excluded.hours_before_expiry,
               frequency = excluded.frequency,
               deleted_at = NULL
-            "#,
+            ",
             params![
-                prefs.vault_id as i64,
+                prefs.vault_id.cast_signed(),
                 channels_json,
                 prefs.hours_before_expiry as i64,
                 serde_json::to_string(&prefs.frequency).unwrap(),
@@ -765,11 +771,11 @@ impl Db {
     pub fn get(&self, vault_id: u64) -> Result<ReminderPreferences, rusqlite::Error> {
         let binding = self.conn.lock().unwrap();
         let mut stmt = binding.prepare(
-            r#"SELECT vault_id, channels, hours_before_expiry, frequency, deleted_at
+            r"SELECT vault_id, channels, hours_before_expiry, frequency, deleted_at
                FROM reminder_preferences
-               WHERE vault_id = ?1 AND deleted_at IS NULL"#,
+               WHERE vault_id = ?1 AND deleted_at IS NULL",
         )?;
-        let row = stmt.query_row(params![vault_id as i64], |r| {
+        let row = stmt.query_row(params![vault_id.cast_signed()], |r| {
             let channels_str: String = r.get(1)?;
             let frequency_str: String = r.get(3)?;
             let channels: Vec<Channel> = serde_json::from_str(&channels_str).unwrap_or_default();
@@ -788,9 +794,9 @@ impl Db {
     pub fn all(&self) -> Result<Vec<ReminderPreferences>, rusqlite::Error> {
         let binding = self.conn.lock().unwrap();
         let mut stmt = binding.prepare(
-            r#"SELECT vault_id, channels, hours_before_expiry, frequency, deleted_at
+            r"SELECT vault_id, channels, hours_before_expiry, frequency, deleted_at
                FROM reminder_preferences
-               WHERE deleted_at IS NULL"#,
+               WHERE deleted_at IS NULL",
         )?;
         let iter = stmt.query_map([], |r| {
             let channels_str: String = r.get(1)?;
@@ -816,7 +822,7 @@ impl Db {
     pub fn soft_delete_reminder(&self, vault_id: u64) -> Result<(), rusqlite::Error> {
         self.conn.lock().unwrap().execute(
             "UPDATE reminder_preferences SET deleted_at = ?1 WHERE vault_id = ?2 AND deleted_at IS NULL",
-            params![chrono::Utc::now().to_rfc3339(), vault_id as i64],
+            params![chrono::Utc::now().to_rfc3339(), vault_id.cast_signed()],
         )?;
         Ok(())
     }
@@ -827,11 +833,11 @@ impl Db {
     ) -> Result<Vec<ReminderPreferences>, rusqlite::Error> {
         let binding = self.conn.lock().unwrap();
         let mut stmt = binding.prepare(
-            r#"SELECT vault_id, channels, hours_before_expiry, frequency, deleted_at
+            r"SELECT vault_id, channels, hours_before_expiry, frequency, deleted_at
                FROM reminder_preferences
-               WHERE vault_id = ?1"#,
+               WHERE vault_id = ?1",
         )?;
-        let iter = stmt.query_map(params![vault_id as i64], |r| {
+        let iter = stmt.query_map(params![vault_id.cast_signed()], |r| {
             let channels_str: String = r.get(1)?;
             let frequency_str: String = r.get(3)?;
             let channels: Vec<Channel> = serde_json::from_str(&channels_str).unwrap_or_default();
@@ -862,16 +868,16 @@ impl Db {
         let channels_json = serde_json::to_string(&sub.channels).unwrap();
         let frequency_json = serde_json::to_string(&sub.frequency).unwrap();
         self.conn.lock().unwrap().execute(
-            r#"
+            r"
             INSERT INTO vault_subscriptions (vault_id, owner, channels, frequency)
             VALUES (?1, ?2, ?3, ?4)
             ON CONFLICT(vault_id) DO UPDATE SET
               owner = excluded.owner,
               channels = excluded.channels,
               frequency = excluded.frequency
-            "#,
+            ",
             params![
-                sub.vault_id as i64,
+                sub.vault_id.cast_signed(),
                 sub.owner,
                 channels_json,
                 frequency_json,
@@ -883,7 +889,7 @@ impl Db {
     pub fn delete_subscription(&self, vault_id: u64) -> Result<(), rusqlite::Error> {
         self.conn.lock().unwrap().execute(
             "DELETE FROM vault_subscriptions WHERE vault_id = ?1",
-            params![vault_id as i64],
+            params![vault_id.cast_signed()],
         )?;
         Ok(())
     }
@@ -891,11 +897,11 @@ impl Db {
     pub fn get_subscription(&self, vault_id: u64) -> Result<Option<Subscription>, rusqlite::Error> {
         let binding = self.conn.lock().unwrap();
         let mut stmt = binding.prepare(
-            r#"SELECT vault_id, owner, channels, frequency
+            r"SELECT vault_id, owner, channels, frequency
                FROM vault_subscriptions
-               WHERE vault_id = ?1"#,
+               WHERE vault_id = ?1",
         )?;
-        let row = stmt.query_row(params![vault_id as i64], |r| {
+        let row = stmt.query_row(params![vault_id.cast_signed()], |r| {
             let channels_str: String = r.get(2)?;
             let frequency_str: String = r.get(3)?;
             let channels: Vec<SubscriptionChannel> =
@@ -919,8 +925,8 @@ impl Db {
 
     pub fn store_idempotency(&self, key: &str, status_code: u16, response_body: &str) {
         let _ = self.conn.lock().unwrap().execute(
-            r#"INSERT OR REPLACE INTO idempotency_keys (key, status_code, response_body, created_at)
-               VALUES (?1, ?2, ?3, ?4)"#,
+            r"INSERT OR REPLACE INTO idempotency_keys (key, status_code, response_body, created_at)
+               VALUES (?1, ?2, ?3, ?4)",
             params![
                 key,
                 status_code as i64,
@@ -966,8 +972,8 @@ impl Db {
 
     pub fn store_unsubscribe_token(&self, token: &str, owner: &str) {
         let _ = self.conn.lock().unwrap().execute(
-            r#"INSERT OR REPLACE INTO unsubscribe_tokens (token, owner, created_at)
-               VALUES (?1, ?2, ?3)"#,
+            r"INSERT OR REPLACE INTO unsubscribe_tokens (token, owner, created_at)
+               VALUES (?1, ?2, ?3)",
             params![token, owner, chrono::Utc::now().to_rfc3339()],
         );
     }
@@ -1012,12 +1018,12 @@ impl Db {
     // ── 2FA operations (#965) ───────────────────────────────────────────────
 
     pub fn upsert_2fa_config(&self, config: &TwoFactorConfig) -> Result<(), rusqlite::Error> {
-        let enabled_i = if config.enabled { 1i64 } else { 0i64 };
+        let enabled_i = i64::from(config.enabled);
         let verified_at = config.verified_at.map(|d| d.to_rfc3339());
         let method_str = serde_json::to_string(&config.method).unwrap();
 
         self.conn.lock().unwrap().execute(
-            r#"
+            r"
             INSERT INTO two_factor_config (vault_id, method, enabled, secret, phone, email, created_at, verified_at)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             ON CONFLICT(vault_id) DO UPDATE SET
@@ -1028,7 +1034,7 @@ impl Db {
                 email = excluded.email,
                 created_at = excluded.created_at,
                 verified_at = excluded.verified_at
-            "#,
+            ",
             params![
                 config.vault_id,
                 method_str,
@@ -1049,11 +1055,11 @@ impl Db {
     ) -> Result<Option<TwoFactorConfig>, rusqlite::Error> {
         let binding = self.conn.lock().unwrap();
         let mut stmt = binding.prepare(
-            r#"
+            r"
             SELECT vault_id, method, enabled, secret, phone, email, created_at, verified_at
             FROM two_factor_config
             WHERE vault_id = ?1
-            "#,
+            ",
         )?;
 
         let row_res = stmt.query_row(params![vault_id], |r| {
@@ -1114,10 +1120,10 @@ impl Db {
 
     pub fn insert_audit_log(&self, entry: &AuditLogEntry) -> Result<(), rusqlite::Error> {
         self.conn.lock().unwrap().execute(
-            r#"
+            r"
             INSERT INTO audit_logs (timestamp, user_id, action, resource, result, ip_address, details)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            "#,
+            ",
             params![
                 entry.timestamp.to_rfc3339(),
                 entry.user_id,
@@ -1125,7 +1131,7 @@ impl Db {
                 entry.resource,
                 entry.result,
                 entry.ip_address,
-                entry.details.as_ref().map(|d| d.to_string()),
+                entry.details.as_ref().map(std::string::ToString::to_string),
             ],
         )?;
         Ok(())
@@ -1175,8 +1181,10 @@ impl Db {
         param_values.push(Box::new(limit));
         param_values.push(Box::new(offset));
 
-        let params: Vec<&dyn rusqlite::types::ToSql> =
-            param_values.iter().map(|p| p.as_ref()).collect();
+        let params: Vec<&dyn rusqlite::types::ToSql> = param_values
+            .iter()
+            .map(std::convert::AsRef::as_ref)
+            .collect();
         let mut stmt = conn.prepare(&sql)?;
 
         let rows = stmt.query_map(params.as_slice(), |r| {
@@ -1222,77 +1230,6 @@ impl Db {
     }
 }
 
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-
-    #[test]
-    fn test_search_vaults_by_owner() {
-        let store = create_vault_store();
-        let vault = Vault {
-            id: "v1".to_string(),
-            owner: "owner1".to_string(),
-            beneficiary: "ben1".to_string(),
-            balance: 1000,
-            check_in_interval: 86400,
-            last_check_in: Utc::now(),
-            created_at: Utc::now(),
-            status: VaultStatus::Active,
-            ttl_remaining: Some(100000),
-        };
-        store.lock().unwrap().insert("v1".to_string(), vault);
-
-        let query = SearchQuery {
-            owner: Some("owner1".to_string()),
-            beneficiary: None,
-            status: None,
-            created_after: None,
-            created_before: None,
-            page: None,
-            limit: None,
-        };
-
-        let result = search_vaults(&store, &query);
-        assert_eq!(result.vaults.len(), 1);
-        assert_eq!(result.total, 1);
-    }
-
-    #[test]
-    fn test_search_vaults_pagination() {
-        let store = create_vault_store();
-        for i in 0..25 {
-            let vault = Vault {
-                id: format!("v{}", i),
-                owner: "owner1".to_string(),
-                beneficiary: "ben1".to_string(),
-                balance: 1000,
-                check_in_interval: 86400,
-                last_check_in: Utc::now(),
-                created_at: Utc::now(),
-                status: VaultStatus::Active,
-                ttl_remaining: Some(100000),
-            };
-            store.lock().unwrap().insert(format!("v{}", i), vault);
-        }
-
-        let query = SearchQuery {
-            owner: Some("owner1".to_string()),
-            beneficiary: None,
-            status: None,
-            created_after: None,
-            created_before: None,
-            page: Some(2),
-            limit: Some(10),
-        };
-
-        let result = search_vaults(&store, &query);
-        assert_eq!(result.vaults.len(), 10);
-        assert_eq!(result.total, 25);
-        assert_eq!(result.page, 2);
-    }
-}
-
 // ── Cache-aware vault accessors ───────────────────────────────────────────────
 
 use crate::cache::VaultCache;
@@ -1317,7 +1254,9 @@ pub fn get_vault_cached(
 
 /// Retrieve the TTL-remaining value for a vault, consulting the cache first.
 ///
-/// Returns `None` if the vault does not exist in the store.
+/// Returns `None` if the vault does not exist in the store. The nested
+/// `Option` mirrors `VaultCache::get_ttl_remaining` (see its doc comment).
+#[allow(clippy::option_option)]
 pub fn get_ttl_remaining_cached(
     store: &VaultStore,
     cache: &VaultCache,
@@ -1354,4 +1293,75 @@ pub fn get_vault_summary_cached(
 /// a check-in or state-change event modifies vault state.
 pub fn invalidate_vault_cache(cache: &VaultCache, vault_id: &str) {
     cache.invalidate(vault_id);
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_search_vaults_by_owner() {
+        let store = create_vault_store();
+        let vault = Vault {
+            id: "v1".to_string(),
+            owner: "owner1".to_string(),
+            beneficiary: "ben1".to_string(),
+            balance: 1000,
+            check_in_interval: 86400,
+            last_check_in: Utc::now(),
+            created_at: Utc::now(),
+            status: VaultStatus::Active,
+            ttl_remaining: Some(100_000),
+        };
+        store.lock().unwrap().insert("v1".to_string(), vault);
+
+        let query = SearchQuery {
+            owner: Some("owner1".to_string()),
+            beneficiary: None,
+            status: None,
+            created_after: None,
+            created_before: None,
+            page: None,
+            limit: None,
+        };
+
+        let result = search_vaults(&store, &query);
+        assert_eq!(result.vaults.len(), 1);
+        assert_eq!(result.total, 1);
+    }
+
+    #[test]
+    fn test_search_vaults_pagination() {
+        let store = create_vault_store();
+        for i in 0..25 {
+            let vault = Vault {
+                id: format!("v{i}"),
+                owner: "owner1".to_string(),
+                beneficiary: "ben1".to_string(),
+                balance: 1000,
+                check_in_interval: 86400,
+                last_check_in: Utc::now(),
+                created_at: Utc::now(),
+                status: VaultStatus::Active,
+                ttl_remaining: Some(100_000),
+            };
+            store.lock().unwrap().insert(format!("v{i}"), vault);
+        }
+
+        let query = SearchQuery {
+            owner: Some("owner1".to_string()),
+            beneficiary: None,
+            status: None,
+            created_after: None,
+            created_before: None,
+            page: Some(2),
+            limit: Some(10),
+        };
+
+        let result = search_vaults(&store, &query);
+        assert_eq!(result.vaults.len(), 10);
+        assert_eq!(result.total, 25);
+        assert_eq!(result.page, 2);
+    }
 }

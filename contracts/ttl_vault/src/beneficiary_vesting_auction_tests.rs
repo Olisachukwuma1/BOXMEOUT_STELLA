@@ -4,9 +4,9 @@ extern crate alloc;
 
 use super::*;
 use soroban_sdk::{
-    testutils::{storage::Instance as _, Address as _, Events, Ledger},
+    testutils::{Address as _, Ledger},
     token::StellarAssetClient,
-    vec, Address, Env,
+    Address, Env,
 };
 
 fn setup() -> (
@@ -41,7 +41,7 @@ fn setup() -> (
 }
 
 fn create_vault_with_deposit(
-    env: &Env,
+    _env: &Env,
     client: &TtlVaultContractClient,
     owner: &Address,
     beneficiary: &Address,

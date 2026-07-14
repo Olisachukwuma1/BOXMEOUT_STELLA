@@ -20,21 +20,21 @@ use types::{
     GeoCheckInEntry, HibernationEntry, IntegrityReport, MetadataVersionEntry, MilestoneEntry,
     MilestoneVestingSchedule, MultiSigConfig, MultiSigOperation, MultiSigProposal, OwnershipProof,
     OwnershipTransferRequest, PasskeyAuditEntry, PasskeyDelegation, PasskeyEscrowRecord,
-    PasskeyHash, PasskeyUsageEntry, PauseRecord,
-    PendingBeneficiaryUpdate, ProofOfLifeEntry, ProposalStatus, ReleaseCondition, ReleaseEvent,
-    ReleaseStatus, ReleaseVoteEntry, StateTransitionEntry, TokenCollateral, TokenConversion,
-    TokenHedge, TokenLending, TokenRebalanceConfig, TokenStaking, TokenWeight, TtlBorrowRecord,
-    Vault, VaultStatusSummary, VestingBonusConfig, VestingCatchUpConfig, VestingPenaltyConfig,
-    VestingPendingClaim, VestingSchedule, WhitelistEntry, WithdrawalAuditEntry, WithdrawalLimit,
-    WithdrawalReversal, WithdrawalScheduleEntry, WithdrawalTracker, YieldDistributionConfig,
-    YieldDistributionMode, ACCEPTANCE_DEADLINE_EXPIRED_TOPIC, ADD_PASSKEY_TOPIC,
-    ADMIN_TRANSFER_COMPLETED_TOPIC, ADMIN_TRANSFER_PROPOSED_TOPIC, BACKUP_CODES_GENERATED_TOPIC,
-    BACKUP_CODE_USED_TOPIC, BATCH_CHECKIN_TOPIC, BATCH_STATUS_TOPIC, BENEFICIARY_ACCEPTED_TOPIC,
-    BENEFICIARY_CAP_TOPIC, BENEFICIARY_CONDITION_ACCEPTED_TOPIC, BENEFICIARY_DECLINED_TOPIC,
-    BENEFICIARY_REBALANCED_TOPIC, BENEFICIARY_TIER_SET_TOPIC, BENEFICIARY_TRIGGER_SET_TOPIC,
-    BENEFICIARY_UPDATED_TOPIC, BENEFICIARY_WATERFALL_TOPIC, BEN_ROTATION_TOPIC, CANCEL_TOPIC,
-    CHECKIN_GEO_TOPIC, CHECKIN_POW_TOPIC, CHECKIN_RATE_LIMITED_TOPIC, CHECK_IN_TOPIC,
-    CLAIM_VEST_TOPIC, CLIFF_REACHED_TOPIC, CONDITIONS_ACCEPTED_TOPIC, CONFLICT_EXPIRED_TOPIC,
+    PasskeyHash, PasskeyUsageEntry, PauseRecord, PendingBeneficiaryUpdate, ProofOfLifeEntry,
+    ProposalStatus, ReleaseCondition, ReleaseEvent, ReleaseStatus, ReleaseVoteEntry,
+    StateTransitionEntry, TokenCollateral, TokenConversion, TokenHedge, TokenLending,
+    TokenRebalanceConfig, TokenStaking, TokenWeight, TtlBorrowRecord, Vault, VaultStatusSummary,
+    VestingBonusConfig, VestingCatchUpConfig, VestingPenaltyConfig, VestingPendingClaim,
+    VestingSchedule, WhitelistEntry, WithdrawalAuditEntry, WithdrawalLimit, WithdrawalReversal,
+    WithdrawalScheduleEntry, WithdrawalTracker, YieldDistributionConfig, YieldDistributionMode,
+    ACCEPTANCE_DEADLINE_EXPIRED_TOPIC, ADD_PASSKEY_TOPIC, ADMIN_TRANSFER_COMPLETED_TOPIC,
+    ADMIN_TRANSFER_PROPOSED_TOPIC, BACKUP_CODES_GENERATED_TOPIC, BACKUP_CODE_USED_TOPIC,
+    BATCH_CHECKIN_TOPIC, BATCH_STATUS_TOPIC, BENEFICIARY_ACCEPTED_TOPIC, BENEFICIARY_CAP_TOPIC,
+    BENEFICIARY_CONDITION_ACCEPTED_TOPIC, BENEFICIARY_DECLINED_TOPIC, BENEFICIARY_REBALANCED_TOPIC,
+    BENEFICIARY_TIER_SET_TOPIC, BENEFICIARY_TRIGGER_SET_TOPIC, BENEFICIARY_UPDATED_TOPIC,
+    BENEFICIARY_WATERFALL_TOPIC, BEN_ROTATION_TOPIC, CANCEL_TOPIC, CHECKIN_GEO_TOPIC,
+    CHECKIN_POW_TOPIC, CHECKIN_RATE_LIMITED_TOPIC, CHECK_IN_TOPIC, CLAIM_VEST_TOPIC,
+    CLIFF_REACHED_TOPIC, CONDITIONS_ACCEPTED_TOPIC, CONFLICT_EXPIRED_TOPIC,
     DELEGATE_BENEFICIARY_TOPIC, DELEGATE_CHECKIN_TOPIC, DEPOSIT_TOPIC, DISPUTE_FILED_TOPIC,
     DISPUTE_RESOLVED_TOPIC, DUPLICATE_VAULT_TOPIC, EXPIRY_WARNING_THRESHOLD,
     HIBERNATION_ENTERED_TOPIC, HIBERNATION_EXITED_TOPIC, INACTIVITY_PENALTY_TOPIC,
@@ -45,33 +45,32 @@ use types::{
     MULTISIG_PROPOSAL_EXPIRY, MULTISIG_PROPOSED_TOPIC, MULTISIG_REJECTED_TOPIC,
     MULTISIG_SIGNER_REMOVED_TOPIC, MULTISIG_VETOED_TOPIC, OWNERSHIP_ACCEPTED_TOPIC,
     OWNERSHIP_CANCELLED_TOPIC, OWNERSHIP_INITIATED_TOPIC, OWNERSHIP_PROOF_TOPIC, OWNERSHIP_TOPIC,
-    OWNERSHIP_TRANSFER_EXPIRED_TOPIC, PARTIAL_LIQUIDATE_TOPIC, PASSKEY_DELEGATED_TOPIC,
-    PASSKEY_DELEGATION_REVOKED_TOPIC, PASSKEY_ESCROWED_TOPIC, PASSKEY_ESCROW_CANCELLED_TOPIC,
-    PASSKEY_ESCROW_RELEASED_TOPIC, PASSKEY_EXPIRY_EXTENDED_TOPIC,
-    PASSKEY_LOCKOUT_TOPIC, PASSKEY_RECOVERED_TOPIC, PASSKEY_RECOVERY_INITIATED_TOPIC,
-    PASSKEY_ROTATION_ENFORCED_TOPIC, PASSKEY_ROTATION_REQUIRED_TOPIC, PASSKEY_UNLOCKED_TOPIC,
-    PASSKEY_AUDIT_TOPIC, PASSKEY_EXPIRY_WARNING_TOPIC, PASSKEY_USAGE_TOPIC, PAUSE_TOPIC,
-    PAUSE_VAULT_TOPIC, PING_EXPIRY_TOPIC, POOL_CREATED_TOPIC,
-    PROOF_OF_LIFE_TOPIC, RECOVERY_EXTEND_TOPIC, RELEASE_TOPIC, RELEASE_VOTE_PASSED_TOPIC,
-    RELEASE_VOTE_TOPIC, REMOVE_PASSKEY_TOPIC, RESTORE_VAULT_TOPIC, RESUME_VAULT_TOPIC,
-    REVOKE_DELEGATE_TOPIC, ROTATE_PASSKEY_TOPIC, SET_BENEFICIARIES_TOPIC,
-    SET_BURN_PERCENTAGE_TOPIC, SET_DECAY_RATE_TOPIC, SET_MAX_INTERVAL_TOPIC, SET_MAX_TTL_TOPIC,
-    SET_METADATA_TOPIC, SET_MIN_INTERVAL_TOPIC, SET_RECOVERY_TOPIC, SET_SPENDING_LIMIT_TOPIC,
-    SET_VESTING_TOPIC, STATE_TRANSITION_TOPIC, SYNC_TTL_TOPIC, TOKEN_COLLATERAL_TOPIC,
-    TOKEN_COLLAT_RLSD_TOPIC, TOKEN_CONVERSION_TOPIC, TOKEN_HEDGE_CLOSE_TOPIC, TOKEN_HEDGE_TOPIC,
-    TOKEN_LENDING_TOPIC, TOKEN_LEND_REPAY_TOPIC, TOKEN_REBALANCED_TOPIC, TOKEN_REBALANCE_TOPIC,
-    TOKEN_STAKING_TOPIC, TOKEN_UNSTAKING_TOPIC, TOKEN_WHITELIST_VALIDATED_TOPIC,
-    TTL_ACCELERATE_TOPIC, TTL_BORROW_TOPIC, TTL_DECAY_TOPIC, TTL_PREDICTED_TOPIC, TTL_REPAY_TOPIC,
-    UNPAUSE_TOPIC, UPDATE_INTERVAL_TOPIC, UPDATE_METADATA_TOPIC, VAULT_ARCHIVED_TOPIC,
-    VAULT_CAP_TOPIC, VAULT_CLONED_OVERRIDE_TOPIC, VAULT_CLONED_TOPIC, VAULT_CREATED_TOPIC,
-    VAULT_MERGED_TOPIC, VESTING_BONUS_CLAIMED_TOPIC, VESTING_BONUS_SET_TOPIC,
-    VESTING_CANCELLED_TOPIC, VESTING_CATCHUP_CLAIMED_TOPIC, VESTING_CATCHUP_SET_TOPIC,
-    WHITELIST_ADDED_TOPIC, WHITELIST_REMOVED_TOPIC, WITHDRAWAL_APPROVAL_GRANTED_TOPIC,
-    WITHDRAWAL_APPROVAL_REQUESTED_TOPIC, WITHDRAWAL_AUDIT_TOPIC, WITHDRAWAL_EXECUTED_TOPIC,
-    WITHDRAWAL_FAILED_TOPIC, WITHDRAWAL_LIMIT_SET_TOPIC, WITHDRAWAL_NOTIF_TOPIC,
-    WITHDRAWAL_REVERSED_TOPIC, WITHDRAWAL_SCHEDULED_TOPIC, WITHDRAWAL_VALIDATION_TOPIC,
-    WITHDRAW_TOPIC, WRAPPED_TOKEN_REGISTERED_TOPIC, WRAPPED_TOKEN_UNREGISTERED_TOPIC,
-    YIELD_DISTRIBUTED_TOPIC, YIELD_REINVESTED_TOPIC,
+    OWNERSHIP_TRANSFER_EXPIRED_TOPIC, PARTIAL_LIQUIDATE_TOPIC, PASSKEY_AUDIT_TOPIC,
+    PASSKEY_DELEGATED_TOPIC, PASSKEY_DELEGATION_REVOKED_TOPIC, PASSKEY_ESCROWED_TOPIC,
+    PASSKEY_ESCROW_CANCELLED_TOPIC, PASSKEY_ESCROW_RELEASED_TOPIC, PASSKEY_EXPIRY_EXTENDED_TOPIC,
+    PASSKEY_EXPIRY_WARNING_TOPIC, PASSKEY_LOCKOUT_TOPIC, PASSKEY_RECOVERED_TOPIC,
+    PASSKEY_RECOVERY_INITIATED_TOPIC, PASSKEY_ROTATION_ENFORCED_TOPIC,
+    PASSKEY_ROTATION_REQUIRED_TOPIC, PASSKEY_UNLOCKED_TOPIC, PASSKEY_USAGE_TOPIC, PAUSE_TOPIC,
+    PAUSE_VAULT_TOPIC, PING_EXPIRY_TOPIC, POOL_CREATED_TOPIC, PROOF_OF_LIFE_TOPIC,
+    RECOVERY_EXTEND_TOPIC, RELEASE_TOPIC, RELEASE_VOTE_PASSED_TOPIC, RELEASE_VOTE_TOPIC,
+    REMOVE_PASSKEY_TOPIC, RESTORE_VAULT_TOPIC, RESUME_VAULT_TOPIC, REVOKE_DELEGATE_TOPIC,
+    ROTATE_PASSKEY_TOPIC, SET_BENEFICIARIES_TOPIC, SET_BURN_PERCENTAGE_TOPIC, SET_DECAY_RATE_TOPIC,
+    SET_MAX_INTERVAL_TOPIC, SET_MAX_TTL_TOPIC, SET_METADATA_TOPIC, SET_MIN_INTERVAL_TOPIC,
+    SET_RECOVERY_TOPIC, SET_SPENDING_LIMIT_TOPIC, SET_VESTING_TOPIC, STATE_TRANSITION_TOPIC,
+    SYNC_TTL_TOPIC, TOKEN_COLLATERAL_TOPIC, TOKEN_COLLAT_RLSD_TOPIC, TOKEN_CONVERSION_TOPIC,
+    TOKEN_HEDGE_CLOSE_TOPIC, TOKEN_HEDGE_TOPIC, TOKEN_LENDING_TOPIC, TOKEN_LEND_REPAY_TOPIC,
+    TOKEN_REBALANCED_TOPIC, TOKEN_REBALANCE_TOPIC, TOKEN_STAKING_TOPIC, TOKEN_UNSTAKING_TOPIC,
+    TOKEN_WHITELIST_VALIDATED_TOPIC, TTL_ACCELERATE_TOPIC, TTL_BORROW_TOPIC, TTL_DECAY_TOPIC,
+    TTL_PREDICTED_TOPIC, TTL_REPAY_TOPIC, UNPAUSE_TOPIC, UPDATE_INTERVAL_TOPIC,
+    UPDATE_METADATA_TOPIC, VAULT_ARCHIVED_TOPIC, VAULT_CAP_TOPIC, VAULT_CLONED_OVERRIDE_TOPIC,
+    VAULT_CLONED_TOPIC, VAULT_CREATED_TOPIC, VAULT_MERGED_TOPIC, VESTING_BONUS_CLAIMED_TOPIC,
+    VESTING_BONUS_SET_TOPIC, VESTING_CANCELLED_TOPIC, VESTING_CATCHUP_CLAIMED_TOPIC,
+    VESTING_CATCHUP_SET_TOPIC, WHITELIST_ADDED_TOPIC, WHITELIST_REMOVED_TOPIC,
+    WITHDRAWAL_APPROVAL_GRANTED_TOPIC, WITHDRAWAL_APPROVAL_REQUESTED_TOPIC, WITHDRAWAL_AUDIT_TOPIC,
+    WITHDRAWAL_EXECUTED_TOPIC, WITHDRAWAL_FAILED_TOPIC, WITHDRAWAL_LIMIT_SET_TOPIC,
+    WITHDRAWAL_NOTIF_TOPIC, WITHDRAWAL_REVERSED_TOPIC, WITHDRAWAL_SCHEDULED_TOPIC,
+    WITHDRAWAL_VALIDATION_TOPIC, WITHDRAW_TOPIC, WRAPPED_TOKEN_REGISTERED_TOPIC,
+    WRAPPED_TOKEN_UNREGISTERED_TOPIC, YIELD_DISTRIBUTED_TOPIC, YIELD_REINVESTED_TOPIC,
 };
 use types::{
     BeneficiaryAuction, BeneficiaryAuctionBid, BeneficiaryConditionalAcceptance,
@@ -109,17 +108,17 @@ mod beneficiary_vesting_tests;
 #[cfg(test)]
 mod bps_invariant_tests;
 #[cfg(test)]
+mod lifecycle_tests;
+#[cfg(test)]
 mod passkey_audit_tests;
 #[cfg(test)]
-mod lifecycle_tests;
+mod passkey_delegation_tests;
 #[cfg(test)]
 mod passkey_escrow_tests;
 #[cfg(test)]
 mod passkey_expiry_notification_tests;
 #[cfg(test)]
 mod regression_tests;
-#[cfg(test)]
-mod passkey_delegation_tests;
 
 /// Minimum TTL (in ledgers) before a persistent entry is eligible for extension.
 /// At ~5 s/ledger this is ~83 minutes.
@@ -1610,7 +1609,7 @@ impl TtlVaultContract {
             let mut applied: Option<BeneficiaryRotationEntry> = None;
             for entry in schedule.iter() {
                 if entry.effective_timestamp <= now
-                    && applied.as_ref().map_or(true, |a: &BeneficiaryRotationEntry| {
+                    && applied.as_ref().is_none_or(|a: &BeneficiaryRotationEntry| {
                         entry.effective_timestamp > a.effective_timestamp
                     })
                 {
@@ -2625,7 +2624,7 @@ impl TtlVaultContract {
                 let mut applied: Option<BeneficiaryRotationEntry> = None;
                 for entry in schedule.iter() {
                     if entry.effective_timestamp <= now
-                        && applied.as_ref().map_or(true, |a: &BeneficiaryRotationEntry| {
+                        && applied.as_ref().is_none_or(|a: &BeneficiaryRotationEntry| {
                             entry.effective_timestamp > a.effective_timestamp
                         })
                     {
@@ -2884,7 +2883,7 @@ impl TtlVaultContract {
             let mut applied: Option<BeneficiaryRotationEntry> = None;
             for entry in schedule.iter() {
                 if entry.effective_timestamp <= now
-                    && applied.as_ref().map_or(true, |a: &BeneficiaryRotationEntry| {
+                    && applied.as_ref().is_none_or(|a: &BeneficiaryRotationEntry| {
                         entry.effective_timestamp > a.effective_timestamp
                     })
                 {
@@ -4369,7 +4368,7 @@ impl TtlVaultContract {
                 .get::<DataKey, VestingRolloverConfig>(&DataKey::VestingRollover(vault_id));
             if rollover_cfg
                 .as_ref()
-                .map_or(true, |c| !c.enabled || c.rolled_amount == 0)
+                .is_none_or(|c| !c.enabled || c.rolled_amount == 0)
             {
                 return Err(ContractError::NothingToClaimYet);
             }
@@ -8895,8 +8894,11 @@ impl TtlVaultContract {
         passkey_hash: &BytesN<32>,
     ) {
         let key = DataKey::PasskeyAuditLog(vault_id);
-        let mut log: Vec<PasskeyAuditEntry> =
-            env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
+        let mut log: Vec<PasskeyAuditEntry> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Vec::new(env));
 
         let timestamp = env.ledger().timestamp();
         log.push_back(PasskeyAuditEntry {
@@ -9920,7 +9922,11 @@ impl TtlVaultContract {
         addr: &Address,
     ) -> bool {
         let key = DataKey::PasskeyDelegation(vault_id, passkey_hash.clone());
-        if let Some(delegation) = env.storage().persistent().get::<DataKey, PasskeyDelegation>(&key) {
+        if let Some(delegation) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, PasskeyDelegation>(&key)
+        {
             if &delegation.delegate == addr && delegation.expires_at > env.ledger().timestamp() {
                 return true;
             }
@@ -10005,7 +10011,11 @@ impl TtlVaultContract {
         }
 
         let key = DataKey::PasskeyDelegation(vault_id, passkey_hash.clone());
-        if let Some(delegation) = env.storage().persistent().get::<DataKey, PasskeyDelegation>(&key) {
+        if let Some(delegation) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, PasskeyDelegation>(&key)
+        {
             env.storage().persistent().remove(&key);
             env.storage()
                 .instance()

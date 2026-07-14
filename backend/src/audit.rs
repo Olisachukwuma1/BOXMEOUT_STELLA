@@ -64,7 +64,7 @@ pub async fn audit_middleware(
 }
 
 /// Helper: write a structured audit entry for state modifications.
-pub async fn log_state_modification(
+pub fn log_state_modification(
     db: &Arc<Db>,
     action: &str,
     resource: &str,

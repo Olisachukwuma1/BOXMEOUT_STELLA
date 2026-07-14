@@ -25,7 +25,7 @@ pub struct VersionCheckResult {
 impl fmt::Display for VersionCheckResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(err) = &self.error {
-            write!(f, "Version check error: {}", err)
+            write!(f, "Version check error: {err}")
         } else if let Some(version) = self.contract_version {
             write!(
                 f,
@@ -69,7 +69,7 @@ where
             compatible: false,
             contract_version: None,
             min_required_version,
-            error: Some(format!("Unable to reach contract to verify version: {}", e)),
+            error: Some(format!("Unable to reach contract to verify version: {e}")),
         },
     }
 }

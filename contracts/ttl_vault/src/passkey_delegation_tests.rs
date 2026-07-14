@@ -54,8 +54,7 @@ fn test_delegate_passkey_creates_delegation_and_emits_event() {
         topics
             .get(0)
             .and_then(|t| t.try_into_val(&env).ok())
-            .map(|s: soroban_sdk::Symbol| s == PASSKEY_DELEGATED_TOPIC)
-            .unwrap_or(false)
+            .is_some_and(|s: soroban_sdk::Symbol| s == PASSKEY_DELEGATED_TOPIC)
     });
     assert!(saw_delegated, "pk_del event should be emitted");
 }
@@ -141,7 +140,10 @@ fn test_delegate_can_check_in() {
 
     env.ledger().with_mut(|l| l.timestamp += 100);
     client.check_in(&id, &delegate, &passkey, &0u64);
-    assert_eq!(client.get_vault(&id).last_check_in, env.ledger().timestamp());
+    assert_eq!(
+        client.get_vault(&id).last_check_in,
+        env.ledger().timestamp()
+    );
 }
 
 /// AC7: once `expires_at` has passed, the delegate can no longer check in.
@@ -194,8 +196,7 @@ fn test_revoke_passkey_delegation() {
         topics
             .get(0)
             .and_then(|t| t.try_into_val(&env).ok())
-            .map(|s: soroban_sdk::Symbol| s == PASSKEY_DELEGATION_REVOKED_TOPIC)
-            .unwrap_or(false)
+            .is_some_and(|s: soroban_sdk::Symbol| s == PASSKEY_DELEGATION_REVOKED_TOPIC)
     });
     assert!(saw_revoked, "pk_del_rev event should be emitted");
 

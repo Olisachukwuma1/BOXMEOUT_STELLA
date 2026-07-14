@@ -72,15 +72,16 @@ proptest! {
         ops in prop::collection::vec(arb_vault_op(), 0..30),
     ) {
         #[derive(Clone, Copy, Debug, PartialEq)]
+        #[allow(dead_code)] // Expired/Released are reserved for when this stub gains real transitions
         enum Status {
             Active,
             Expired,
             Released,
         }
 
-        let mut status = Status::Active;
+        let status = Status::Active;
         let mut ttl = 86400u64; // 1 day
-        let mut check_in_interval = 86400u64;
+        let check_in_interval = 86400u64;
 
         for op in ops {
             match op {
@@ -89,18 +90,8 @@ proptest! {
                         ttl = ttl.saturating_add(check_in_interval);
                     }
                 }
-                VaultOp::Deposit(_) => {
-                    // Can only deposit to active vault
-                    if status != Status::Active {
-                        continue;
-                    }
-                }
-                VaultOp::Withdraw(_) => {
-                    // Can only withdraw from active vault
-                    if status != Status::Active {
-                        continue;
-                    }
-                }
+                // Deposit/Withdraw are no-ops here: both only apply to an active vault
+                VaultOp::Deposit(_) | VaultOp::Withdraw(_) => {}
             }
         }
 

@@ -105,6 +105,11 @@ impl VaultCache {
 
     /// Return the cached TTL-remaining value for `vault_id`, if present and not
     /// expired.
+    ///
+    /// The nested `Option` is intentional and covers three distinct states:
+    /// `None` = cache miss, `Some(None)` = cached "no TTL" result,
+    /// `Some(Some(ttl))` = cached TTL value.
+    #[allow(clippy::option_option)]
     pub fn get_ttl_remaining(&self, vault_id: &str) -> Option<Option<u64>> {
         let mut map = self.inner.lock().unwrap();
         if let Some(entries) = map.get_mut(vault_id) {
@@ -174,9 +179,9 @@ impl VaultCache {
         let map = self.inner.lock().unwrap();
         map.values()
             .filter(|e| {
-                e.vault.as_ref().map_or(false, |v| !v.is_expired())
-                    || e.ttl_remaining.as_ref().map_or(false, |v| !v.is_expired())
-                    || e.summary.as_ref().map_or(false, |v| !v.is_expired())
+                e.vault.as_ref().is_some_and(|v| !v.is_expired())
+                    || e.ttl_remaining.as_ref().is_some_and(|v| !v.is_expired())
+                    || e.summary.as_ref().is_some_and(|v| !v.is_expired())
             })
             .count()
     }

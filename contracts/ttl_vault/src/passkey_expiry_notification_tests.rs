@@ -4,7 +4,7 @@ extern crate alloc;
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Events, Ledger},
+    testutils::{Address as _, Events},
     token::StellarAssetClient,
     Address, BytesN, Env, IntoVal, TryIntoVal, Val,
 };
@@ -39,10 +39,7 @@ fn setup() -> (
 
 /// Returns the `seconds_remaining` payload of the last `pk_expwrn` event for
 /// `passkey_hash`, if one was emitted.
-fn passkey_expiry_warning_seconds(
-    env: &Env,
-    passkey_hash: &BytesN<32>,
-) -> Option<u64> {
+fn passkey_expiry_warning_seconds(env: &Env, passkey_hash: &BytesN<32>) -> Option<u64> {
     let events = env.events().all();
     for e in events.iter() {
         let topics: soroban_sdk::Vec<Val> = e.1.clone().into_val(env);

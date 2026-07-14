@@ -16,8 +16,7 @@ fn saw_topic(env: &Env, topic: Symbol) -> bool {
         topics
             .get(0)
             .and_then(|t| t.try_into_val(env).ok())
-            .map(|s: Symbol| s == topic)
-            .unwrap_or(false)
+            .is_some_and(|s: Symbol| s == topic)
     })
 }
 
@@ -87,10 +86,7 @@ fn test_escrow_passkey_requires_owner_auth() {
         .try_escrow_passkey(&vault_id, &stranger, &passkey_hash, &recovery_contact)
         .unwrap_err()
         .unwrap();
-    assert_eq!(
-        err,
-        ContractError::NotOwner
-    );
+    assert_eq!(err, ContractError::NotOwner);
 }
 
 // Requirement 3.3: PasskeyNotFound if the hash isn't registered.
@@ -104,10 +100,7 @@ fn test_escrow_passkey_not_found() {
         .try_escrow_passkey(&vault_id, &owner, &passkey_hash, &recovery_contact)
         .unwrap_err()
         .unwrap();
-    assert_eq!(
-        err,
-        ContractError::PasskeyNotFound
-    );
+    assert_eq!(err, ContractError::PasskeyNotFound);
 }
 
 // Requirement 3.4: InvalidBeneficiary if recovery_contact == owner.
@@ -120,10 +113,7 @@ fn test_escrow_passkey_rejects_self_as_recovery_contact() {
         .try_escrow_passkey(&vault_id, &owner, &passkey_hash, &owner)
         .unwrap_err()
         .unwrap();
-    assert_eq!(
-        err,
-        ContractError::InvalidBeneficiary
-    );
+    assert_eq!(err, ContractError::InvalidBeneficiary);
 }
 
 // Requirement 3.5: AlreadyInEscrow on double-escrow of the same passkey.
@@ -137,10 +127,7 @@ fn test_escrow_passkey_rejects_double_escrow() {
         .try_escrow_passkey(&vault_id, &owner, &passkey_hash, &recovery_contact)
         .unwrap_err()
         .unwrap();
-    assert_eq!(
-        err,
-        ContractError::AlreadyInEscrow
-    );
+    assert_eq!(err, ContractError::AlreadyInEscrow);
 }
 
 // Requirement 3.6: owner cannot check in with an escrowed passkey.
@@ -155,10 +142,7 @@ fn test_check_in_rejected_while_passkey_escrowed() {
         .try_check_in(&vault_id, &owner, &passkey_hash, &0u64)
         .unwrap_err()
         .unwrap();
-    assert_eq!(
-        err,
-        ContractError::PasskeyInEscrow
-    );
+    assert_eq!(err, ContractError::PasskeyInEscrow);
 }
 
 // Requirement 3.7 / 3.13: recovery_contact releases escrow, restoring usability,
@@ -171,7 +155,9 @@ fn test_release_escrow_restores_check_in_and_emits_event() {
     client.escrow_passkey(&vault_id, &owner, &passkey_hash, &recovery_contact);
     client.release_escrow_passkey(&vault_id, &recovery_contact, &passkey_hash);
 
-    assert!(client.get_passkey_escrow(&vault_id, &passkey_hash).is_none());
+    assert!(client
+        .get_passkey_escrow(&vault_id, &passkey_hash)
+        .is_none());
 
     assert!(saw_topic(&env, PASSKEY_ESCROW_RELEASED_TOPIC));
 
@@ -193,10 +179,7 @@ fn test_release_escrow_requires_recovery_contact() {
         .try_release_escrow_passkey(&vault_id, &stranger, &passkey_hash)
         .unwrap_err()
         .unwrap();
-    assert_eq!(
-        err,
-        ContractError::NotRecoveryContact
-    );
+    assert_eq!(err, ContractError::NotRecoveryContact);
 }
 
 // Requirement 3.10 / 3.11 / 3.14: owner can cancel escrow, restoring usability,
@@ -209,7 +192,9 @@ fn test_cancel_escrow_restores_check_in_and_emits_event() {
 
     client.cancel_passkey_escrow(&vault_id, &owner, &passkey_hash);
 
-    assert!(client.get_passkey_escrow(&vault_id, &passkey_hash).is_none());
+    assert!(client
+        .get_passkey_escrow(&vault_id, &passkey_hash)
+        .is_none());
 
     assert!(saw_topic(&env, PASSKEY_ESCROW_CANCELLED_TOPIC));
 
@@ -229,10 +214,7 @@ fn test_cancel_escrow_requires_owner() {
         .try_cancel_passkey_escrow(&vault_id, &recovery_contact, &passkey_hash)
         .unwrap_err()
         .unwrap();
-    assert_eq!(
-        err,
-        ContractError::NotOwner
-    );
+    assert_eq!(err, ContractError::NotOwner);
 }
 
 // Requirement 3.15: get_passkey_escrow returns None when no escrow exists.
@@ -241,7 +223,9 @@ fn test_get_passkey_escrow_returns_none_when_absent() {
     let (env, owner, beneficiary, _recovery_contact, client) = setup();
     let (vault_id, passkey_hash) = make_vault_with_passkey(&client, &env, &owner, &beneficiary);
 
-    assert!(client.get_passkey_escrow(&vault_id, &passkey_hash).is_none());
+    assert!(client
+        .get_passkey_escrow(&vault_id, &passkey_hash)
+        .is_none());
 }
 
 // release_escrow_passkey with no escrow record returns PasskeyNotFound.
@@ -254,10 +238,7 @@ fn test_release_escrow_not_found() {
         .try_release_escrow_passkey(&vault_id, &recovery_contact, &passkey_hash)
         .unwrap_err()
         .unwrap();
-    assert_eq!(
-        err,
-        ContractError::PasskeyNotFound
-    );
+    assert_eq!(err, ContractError::PasskeyNotFound);
 }
 
 // cancel_passkey_escrow with no escrow record returns PasskeyNotFound.
@@ -270,8 +251,5 @@ fn test_cancel_escrow_not_found() {
         .try_cancel_passkey_escrow(&vault_id, &owner, &passkey_hash)
         .unwrap_err()
         .unwrap();
-    assert_eq!(
-        err,
-        ContractError::PasskeyNotFound
-    );
+    assert_eq!(err, ContractError::PasskeyNotFound);
 }

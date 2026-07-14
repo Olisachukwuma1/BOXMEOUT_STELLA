@@ -1,4 +1,8 @@
+// Glob imports: this file's #[cfg(test)] mod tests (use super::*) draws on most
+// of db's and models' public API, so an explicit list would just duplicate it.
+#[allow(clippy::wildcard_imports)]
 use crate::db::*;
+#[allow(clippy::wildcard_imports)]
 use crate::models::*;
 use chrono::Utc;
 
@@ -65,14 +69,14 @@ pub fn create_vault_from_template(
 
 // ── Localized email templates ───────────────────────────────────────────────
 
-fn resolve_locale(locale: &Option<Locale>) -> &Locale {
+fn resolve_locale(locale: Option<&Locale>) -> &Locale {
     static EN: Locale = Locale::En;
-    locale.as_ref().unwrap_or(&EN)
+    locale.unwrap_or(&EN)
 }
 
 pub fn email_subject(
     notification_type: &NotificationType,
-    locale: &Option<Locale>,
+    locale: Option<&Locale>,
 ) -> &'static str {
     match (resolve_locale(locale), notification_type) {
         // English
@@ -108,7 +112,7 @@ pub fn email_subject(
 
 pub fn email_body(
     notification_type: &NotificationType,
-    locale: &Option<Locale>,
+    locale: Option<&Locale>,
     vault_id: &str,
     hours_remaining: Option<u64>,
 ) -> String {
@@ -298,23 +302,28 @@ mod tests {
 
     #[test]
     fn test_english_expiry_subject() {
-        let subject = email_subject(&NotificationType::ExpiryWarning, &None);
+        let subject = email_subject(&NotificationType::ExpiryWarning, None);
         assert!(subject.contains("expiring"));
     }
 
     #[test]
     fn test_english_is_default_locale() {
-        let subject_none = email_subject(&NotificationType::ExpiryWarning, &None);
-        let subject_en = email_subject(&NotificationType::ExpiryWarning, &Some(Locale::En));
+        let subject_none = email_subject(&NotificationType::ExpiryWarning, None);
+        let subject_en = email_subject(&NotificationType::ExpiryWarning, Some(&Locale::En));
         assert_eq!(subject_none, subject_en);
     }
 
     #[test]
     fn test_spanish_templates() {
         let locale = Some(Locale::Es);
-        let subject = email_subject(&NotificationType::ExpiryWarning, &locale);
+        let subject = email_subject(&NotificationType::ExpiryWarning, locale.as_ref());
         assert!(subject.contains("vencer"));
-        let body = email_body(&NotificationType::ExpiryWarning, &locale, "v1", Some(12));
+        let body = email_body(
+            &NotificationType::ExpiryWarning,
+            locale.as_ref(),
+            "v1",
+            Some(12),
+        );
         assert!(body.contains("12"));
         assert!(body.contains("v1"));
     }
@@ -322,18 +331,28 @@ mod tests {
     #[test]
     fn test_french_templates() {
         let locale = Some(Locale::Fr);
-        let subject = email_subject(&NotificationType::CheckInReminder, &locale);
+        let subject = email_subject(&NotificationType::CheckInReminder, locale.as_ref());
         assert!(subject.contains("enregistrer"));
-        let body = email_body(&NotificationType::CheckInReminder, &locale, "v1", None);
+        let body = email_body(
+            &NotificationType::CheckInReminder,
+            locale.as_ref(),
+            "v1",
+            None,
+        );
         assert!(body.contains("v1"));
     }
 
     #[test]
     fn test_german_templates() {
         let locale = Some(Locale::De);
-        let subject = email_subject(&NotificationType::VaultReleased, &locale);
+        let subject = email_subject(&NotificationType::VaultReleased, locale.as_ref());
         assert!(subject.contains("freigegeben"));
-        let body = email_body(&NotificationType::VaultReleased, &locale, "v1", None);
+        let body = email_body(
+            &NotificationType::VaultReleased,
+            locale.as_ref(),
+            "v1",
+            None,
+        );
         assert!(body.contains("v1"));
     }
 
@@ -353,9 +372,9 @@ mod tests {
         ];
         for locale in &locales {
             for nt in &types {
-                let subject = email_subject(nt, locale);
+                let subject = email_subject(nt, locale.as_ref());
                 assert!(!subject.is_empty());
-                let body = email_body(nt, locale, "v1", Some(24));
+                let body = email_body(nt, locale.as_ref(), "v1", Some(24));
                 assert!(!body.is_empty());
                 assert!(body.contains("v1"));
             }
@@ -364,8 +383,8 @@ mod tests {
 
     #[test]
     fn test_fallback_to_english() {
-        let subject = email_subject(&NotificationType::VaultPaused, &None);
-        let subject_en = email_subject(&NotificationType::VaultPaused, &Some(Locale::En));
+        let subject = email_subject(&NotificationType::VaultPaused, None);
+        let subject_en = email_subject(&NotificationType::VaultPaused, Some(&Locale::En));
         assert_eq!(subject, subject_en);
     }
 
@@ -373,18 +392,18 @@ mod tests {
     fn test_expiry_body_includes_hours() {
         let body = email_body(
             &NotificationType::ExpiryWarning,
-            &Some(Locale::En),
+            Some(&Locale::En),
             "v1",
             Some(6),
         );
-        assert!(body.contains("6"));
+        assert!(body.contains('6'));
     }
 
     #[test]
     fn test_expiry_body_defaults_to_24_hours() {
         let body = email_body(
             &NotificationType::ExpiryWarning,
-            &Some(Locale::En),
+            Some(&Locale::En),
             "v1",
             None,
         );

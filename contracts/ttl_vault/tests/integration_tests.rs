@@ -2,12 +2,6 @@
 
 extern crate alloc;
 
-use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    token::StellarAssetClient,
-    Address, Env,
-};
-
 /// Integration test configuration
 pub struct TestnetConfig {
     pub rpc_url: &'static str,
@@ -29,7 +23,7 @@ impl TestnetConfig {
 /// are in `contracts/ttl_vault/src/lifecycle_tests.rs`.
 
 #[test]
-#[ignore]
+#[ignore = "placeholder: requires live Stellar testnet RPC connectivity, not yet implemented"]
 fn integration_full_vault_lifecycle() {
     let config = TestnetConfig::testnet();
     println!("Integration test: Full vault lifecycle");
@@ -38,55 +32,55 @@ fn integration_full_vault_lifecycle() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "placeholder: requires live Stellar testnet RPC connectivity, not yet implemented"]
 fn integration_vault_creation_and_deposit() {
     println!("Integration test: Vault creation and deposit");
 }
 
 #[test]
-#[ignore]
+#[ignore = "placeholder: requires live Stellar testnet RPC connectivity, not yet implemented"]
 fn integration_checkin_extends_ttl() {
     println!("Integration test: Check-in extends TTL");
 }
 
 #[test]
-#[ignore]
+#[ignore = "placeholder: requires live Stellar testnet RPC connectivity, not yet implemented"]
 fn integration_passkey_authentication() {
     println!("Integration test: Passkey authentication");
 }
 
 #[test]
-#[ignore]
+#[ignore = "placeholder: requires live Stellar testnet RPC connectivity, not yet implemented"]
 fn integration_fee_calculation_and_transfers() {
     println!("Integration test: Fee calculation and transfers");
 }
 
 #[test]
-#[ignore]
+#[ignore = "placeholder: requires live Stellar testnet RPC connectivity, not yet implemented"]
 fn integration_beneficiary_payout_on_expiry() {
     println!("Integration test: Beneficiary payout on expiry");
 }
 
 #[test]
-#[ignore]
+#[ignore = "placeholder: requires live Stellar testnet RPC connectivity, not yet implemented"]
 fn integration_multiple_vaults_isolation() {
     println!("Integration test: Multiple vaults isolation");
 }
 
 #[test]
-#[ignore]
+#[ignore = "placeholder: requires live Stellar testnet RPC connectivity, not yet implemented"]
 fn integration_error_handling() {
     println!("Integration test: Error handling");
 }
 
 #[test]
-#[ignore]
+#[ignore = "placeholder: requires live Stellar testnet RPC connectivity, not yet implemented"]
 fn integration_state_persistence() {
     println!("Integration test: State persistence");
 }
 
 #[test]
-#[ignore]
+#[ignore = "placeholder: requires live Stellar testnet RPC connectivity, not yet implemented"]
 fn integration_network_latency_handling() {
     println!("Integration test: Network latency handling");
 }

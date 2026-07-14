@@ -1,9 +1,10 @@
+// Glob imports: this file's #[cfg(test)] mod tests (use super::*) draws on most
+// of db's and models' public API, so an explicit list would just duplicate it.
+#[allow(clippy::wildcard_imports)]
 use crate::db::*;
+#[allow(clippy::wildcard_imports)]
 use crate::models::*;
 use chrono::{DateTime, Utc};
-use serde_json::json;
-use std::io::Write;
-use std::sync::Arc;
 
 pub fn search_vaults_handler(store: &VaultStore, query: SearchQuery) -> SearchResult {
     search_vaults(store, &query)
@@ -54,7 +55,7 @@ fn export_to_csv(data: &ExportData) -> Result<String, String> {
     let mut wtr = csv::Writer::from_writer(vec![]);
 
     // Write vault info
-    wtr.write_record(&[
+    wtr.write_record([
         "Type",
         "ID",
         "Owner",
@@ -65,7 +66,7 @@ fn export_to_csv(data: &ExportData) -> Result<String, String> {
     ])
     .map_err(|e| e.to_string())?;
 
-    wtr.write_record(&[
+    wtr.write_record([
         "Vault",
         &data.vault.id,
         &data.vault.owner,
@@ -77,13 +78,13 @@ fn export_to_csv(data: &ExportData) -> Result<String, String> {
     .map_err(|e| e.to_string())?;
 
     // Write events
-    wtr.write_record(&["", "", "", "", "", "", ""])
+    wtr.write_record(["", "", "", "", "", "", ""])
         .map_err(|e| e.to_string())?;
-    wtr.write_record(&["Event", "Type", "Timestamp", "Data", "", "", ""])
+    wtr.write_record(["Event", "Type", "Timestamp", "Data", "", "", ""])
         .map_err(|e| e.to_string())?;
 
     for event in &data.history {
-        wtr.write_record(&[
+        wtr.write_record([
             "Event",
             &format!("{:?}", event.event_type),
             &event.timestamp.to_rfc3339(),
@@ -121,7 +122,7 @@ pub fn generate_compliance_report(
     for event in history {
         match event.event_type {
             EventType::Deposit => {
-                if let Some(amount) = event.data.get("amount").and_then(|v| v.as_i64()) {
+                if let Some(amount) = event.data.get("amount").and_then(serde_json::Value::as_i64) {
                     total_deposits += amount as i128;
                     fund_movements.push(FundMovement {
                         timestamp: event.timestamp,
@@ -132,7 +133,7 @@ pub fn generate_compliance_report(
                 }
             }
             EventType::Withdrawal => {
-                if let Some(amount) = event.data.get("amount").and_then(|v| v.as_i64()) {
+                if let Some(amount) = event.data.get("amount").and_then(serde_json::Value::as_i64) {
                     total_withdrawals += amount as i128;
                     fund_movements.push(FundMovement {
                         timestamp: event.timestamp,
@@ -143,7 +144,11 @@ pub fn generate_compliance_report(
                 }
             }
             EventType::TtlUpdate => {
-                if let Some(ttl) = event.data.get("ttl_remaining").and_then(|v| v.as_u64()) {
+                if let Some(ttl) = event
+                    .data
+                    .get("ttl_remaining")
+                    .and_then(serde_json::Value::as_u64)
+                {
                     ttl_history.push(TtlEvent {
                         timestamp: event.timestamp,
                         event_type: "ttl_extended".to_string(),
@@ -186,101 +191,44 @@ pub fn export_compliance_report(report: &ComplianceReport, format: &str) -> Resu
     match format {
         "json" => Ok(serde_json::to_string_pretty(report).map_err(|e| e.to_string())?),
         "pdf" => {
+            use std::fmt::Write as _;
             // Minimal PDF export as text representation
             let mut pdf_content = String::new();
-            pdf_content.push_str(&format!("COMPLIANCE REPORT\n"));
-            pdf_content.push_str(&format!("Generated: {}\n\n", report.report_generated_at));
-            pdf_content.push_str(&format!("Vault ID: {}\n", report.vault_id));
-            pdf_content.push_str(&format!("Owner: {}\n", report.owner));
-            pdf_content.push_str(&format!("Beneficiary: {}\n", report.beneficiary));
-            pdf_content.push_str(&format!("Current Balance: {}\n", report.current_balance));
-            pdf_content.push_str(&format!("Total Deposits: {}\n", report.total_deposits));
-            pdf_content.push_str(&format!(
+            pdf_content.push_str("COMPLIANCE REPORT\n");
+            let _ = write!(pdf_content, "Generated: {}\n\n", report.report_generated_at);
+            let _ = writeln!(pdf_content, "Vault ID: {}", report.vault_id);
+            let _ = writeln!(pdf_content, "Owner: {}", report.owner);
+            let _ = writeln!(pdf_content, "Beneficiary: {}", report.beneficiary);
+            let _ = writeln!(pdf_content, "Current Balance: {}", report.current_balance);
+            let _ = writeln!(pdf_content, "Total Deposits: {}", report.total_deposits);
+            let _ = write!(
+                pdf_content,
                 "Total Withdrawals: {}\n\n",
                 report.total_withdrawals
-            ));
+            );
 
             pdf_content.push_str("FUND MOVEMENTS:\n");
             for movement in &report.fund_movements {
-                pdf_content.push_str(&format!(
-                    "{} - {} {}\n",
+                let _ = writeln!(
+                    pdf_content,
+                    "{} - {} {}",
                     movement.timestamp, movement.movement_type, movement.amount
-                ));
+                );
             }
 
             pdf_content.push_str("\nBENEFICIARY CHANGES:\n");
             for change in &report.beneficiary_changes {
-                pdf_content.push_str(&format!(
-                    "{} - {} -> {}\n",
+                let _ = writeln!(
+                    pdf_content,
+                    "{} - {} -> {}",
                     change.timestamp, change.old_beneficiary, change.new_beneficiary
-                ));
+                );
             }
 
             Ok(pdf_content)
         }
         _ => Err("Unsupported format".to_string()),
     }
-}
-
-pub fn get_vault_templates() -> VaultTemplateList {
-    VaultTemplateList {
-        templates: vec![
-            VaultTemplate {
-                id: "simple-inheritance".to_string(),
-                name: "Simple Inheritance".to_string(),
-                description: "Basic vault for single beneficiary inheritance".to_string(),
-                check_in_interval: 86400 * 30, // 30 days
-                recommended_for: "Individual asset protection".to_string(),
-            },
-            VaultTemplate {
-                id: "family-trust".to_string(),
-                name: "Family Trust".to_string(),
-                description: "Multi-beneficiary vault for family wealth distribution".to_string(),
-                check_in_interval: 86400 * 90, // 90 days
-                recommended_for: "Family wealth management".to_string(),
-            },
-            VaultTemplate {
-                id: "business-succession".to_string(),
-                name: "Business Succession".to_string(),
-                description: "Vault for business continuity and succession planning".to_string(),
-                check_in_interval: 86400 * 60, // 60 days
-                recommended_for: "Business asset protection".to_string(),
-            },
-        ],
-    }
-}
-
-pub fn create_vault_from_template(
-    store: &VaultStore,
-    template_id: &str,
-    owner: String,
-    beneficiary: String,
-) -> Result<Vault, String> {
-    let templates = get_vault_templates();
-    let template = templates
-        .templates
-        .iter()
-        .find(|t| t.id == template_id)
-        .ok_or_else(|| "Template not found".to_string())?;
-
-    let vault_id = uuid::Uuid::new_v4().to_string();
-    let vault = Vault {
-        id: vault_id,
-        owner,
-        beneficiary,
-        balance: 0,
-        check_in_interval: template.check_in_interval,
-        last_check_in: Utc::now(),
-        created_at: Utc::now(),
-        status: VaultStatus::Active,
-        ttl_remaining: Some(template.check_in_interval),
-    };
-
-    store
-        .lock()
-        .unwrap()
-        .insert(vault.id.clone(), vault.clone());
-    Ok(vault)
 }
 
 // ── Task 1: Analytics ────────────────────────────────────────────────────────
@@ -319,7 +267,7 @@ pub fn get_vault_detail_analytics_handler(
             ttl_remaining_seconds: e
                 .data
                 .get("ttl_remaining")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0),
             event: format!("{:?}", e.event_type),
         })
@@ -342,8 +290,8 @@ pub fn get_vault_detail_analytics_handler(
 
     let total_check_ins = check_ins.len() as u64;
     let avg_interval = if total_check_ins > 1 {
-        let first = check_ins.first().map(|e| e.timestamp).unwrap_or(Utc::now());
-        let last = check_ins.last().map(|e| e.timestamp).unwrap_or(Utc::now());
+        let first = check_ins.first().map_or(Utc::now(), |e| e.timestamp);
+        let last = check_ins.last().map_or(Utc::now(), |e| e.timestamp);
         let span_seconds = (last - first).num_seconds().max(1) as u64;
         span_seconds / (total_check_ins - 1).max(1)
     } else {
@@ -351,7 +299,7 @@ pub fn get_vault_detail_analytics_handler(
     };
 
     let next_deadline =
-        vault.last_check_in + chrono::Duration::seconds(vault.check_in_interval as i64);
+        vault.last_check_in + chrono::Duration::seconds(vault.check_in_interval.cast_signed());
     let days_until_deadline = (next_deadline - Utc::now()).num_seconds() / 86400;
 
     let check_in_frequency = CheckInFrequency {
@@ -370,7 +318,7 @@ pub fn get_vault_detail_analytics_handler(
     let withdrawal_count = withdrawals.len() as u64;
     let total_withdrawals: i128 = withdrawals
         .iter()
-        .filter_map(|e| e.data.get("amount").and_then(|v| v.as_i64()))
+        .filter_map(|e| e.data.get("amount").and_then(serde_json::Value::as_i64))
         .map(|v| v as i128)
         .sum();
 
@@ -452,10 +400,10 @@ pub fn restore_vault_handler(
         .ok_or_else(|| "Backup not found".to_string())?;
 
     let decoded = base64_decode(&backup.encrypted_payload)
-        .map_err(|e| format!("Failed to decode backup: {}", e))?;
+        .map_err(|e| format!("Failed to decode backup: {e}"))?;
 
     let vault: Vault = serde_json::from_slice(&decoded)
-        .map_err(|e| format!("Failed to deserialise vault: {}", e))?;
+        .map_err(|e| format!("Failed to deserialise vault: {e}"))?;
 
     store
         .lock()
@@ -524,13 +472,13 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
 
 // ── Task 3: Sharing & Collaboration ──────────────────────────────────────────
 
-const DEFAULT_TOKEN_EXPIRY_SECONDS: u64 = 604800; // 7 days
+const DEFAULT_TOKEN_EXPIRY_SECONDS: u64 = 604_800; // 7 days
 
 /// POST /vaults/{id}/share
 pub fn share_vault_handler(
     store: &VaultStore,
     share_store: &ShareStore,
-    token_store: &ShareTokenStore,
+    _token_store: &ShareTokenStore,
     audit_store: &AuditStore,
     vault_id: &str,
     request: ShareRequest,
@@ -590,7 +538,8 @@ pub fn generate_share_token_handler(
         + chrono::Duration::seconds(
             request
                 .expiry_seconds
-                .unwrap_or(DEFAULT_TOKEN_EXPIRY_SECONDS) as i64,
+                .unwrap_or(DEFAULT_TOKEN_EXPIRY_SECONDS)
+                .cast_signed(),
         );
 
     // Create a VaultShare entry (reuses existing share infrastructure)
@@ -835,6 +784,172 @@ pub fn get_notification_preferences_handler(
     get_notification_preferences(notif_store, vault_id)
 }
 
+// ── Release Simulator ────────────────────────────────────────────────────────
+
+/// Parse a comma-separated `scenarios` query param into a `Vec<ScenarioType>`.
+/// Returns all three scenarios when the param is absent or empty.
+pub fn parse_scenario_types(raw: Option<&str>) -> Vec<ScenarioType> {
+    match raw {
+        None | Some("") => vec![
+            ScenarioType::NoCheckIns,
+            ScenarioType::ConsistentCheckIns,
+            ScenarioType::MissedCheckInDates,
+        ],
+        Some(s) => s
+            .split(',')
+            .filter_map(|part| match part.trim() {
+                "no_check_ins" => Some(ScenarioType::NoCheckIns),
+                "consistent_check_ins" => Some(ScenarioType::ConsistentCheckIns),
+                "missed_check_in_dates" => Some(ScenarioType::MissedCheckInDates),
+                _ => None,
+            })
+            .collect(),
+    }
+}
+
+/// Calculate the release date for a single scenario given vault state at `now`.
+///
+/// * `ttl_remaining_secs` — current TTL left in seconds (0 means already expired)
+/// * `check_in_interval`  — vault's configured check-in interval in seconds
+/// * `missed_count`       — for `MissedCheckInDates`: how many consecutive
+///   check-ins are missed before the owner stops entirely
+pub fn simulate_scenario(
+    now: DateTime<Utc>,
+    scenario: ScenarioType,
+    ttl_remaining_secs: u64,
+    check_in_interval: u64,
+    missed_count: u32,
+) -> ScenarioResult {
+    match scenario {
+        // Owner stops checking in immediately — vault releases when current TTL runs out.
+        ScenarioType::NoCheckIns => {
+            let release_at = now + chrono::Duration::seconds(ttl_remaining_secs.cast_signed());
+            let seconds_until = ttl_remaining_secs.cast_signed();
+            ScenarioResult {
+                scenario: ScenarioType::NoCheckIns,
+                description: "Owner performs no further check-ins. \
+                    Vault releases when the current TTL expires."
+                    .to_string(),
+                projected_release_at: release_at,
+                seconds_until_release: seconds_until,
+                confidence: "high".to_string(),
+                notes: format!(
+                    "Current TTL remaining: {} seconds ({:.1} days).",
+                    ttl_remaining_secs,
+                    ttl_remaining_secs as f64 / 86_400.0
+                ),
+            }
+        }
+
+        // Owner keeps checking in every `check_in_interval` seconds indefinitely.
+        // The vault never releases under this scenario.
+        ScenarioType::ConsistentCheckIns => {
+            // 100 years in seconds as a "never" sentinel
+            let never_secs: i64 = 100 * 365 * 24 * 3600;
+            let far_future = now + chrono::Duration::seconds(never_secs);
+            ScenarioResult {
+                scenario: ScenarioType::ConsistentCheckIns,
+                description: "Owner checks in consistently at the configured interval. \
+                    Vault does not release."
+                    .to_string(),
+                projected_release_at: far_future,
+                seconds_until_release: -1, // -1 signals "never" to clients
+                confidence: "high".to_string(),
+                notes: format!(
+                    "With a check-in interval of {} seconds ({:.1} days), \
+                    consistent check-ins prevent vault release indefinitely.",
+                    check_in_interval,
+                    check_in_interval as f64 / 86_400.0
+                ),
+            }
+        }
+
+        // Owner misses `missed_count` consecutive check-ins, then stops.
+        // Each missed check-in adds one full `check_in_interval` to the TTL runway.
+        ScenarioType::MissedCheckInDates => {
+            let safe_missed = missed_count.max(1);
+            // After missing `safe_missed` check-ins the TTL has been running down
+            // for `safe_missed * check_in_interval` additional seconds beyond the current TTL.
+            let extra_seconds = (safe_missed as u64).saturating_mul(check_in_interval);
+            let total_seconds = ttl_remaining_secs.saturating_add(extra_seconds);
+            let release_at = now + chrono::Duration::seconds(total_seconds.cast_signed());
+            let confidence = if safe_missed <= 2 { "medium" } else { "low" }.to_string();
+            ScenarioResult {
+                scenario: ScenarioType::MissedCheckInDates,
+                description: format!(
+                    "Owner misses {safe_missed} consecutive check-in(s), then stops entirely."
+                ),
+                projected_release_at: release_at,
+                seconds_until_release: total_seconds.cast_signed(),
+                confidence,
+                notes: format!(
+                    "Each missed check-in adds {} seconds ({:.1} days) to the release window. \
+                    {} missed check-in(s) → {} additional seconds.",
+                    check_in_interval,
+                    check_in_interval as f64 / 86_400.0,
+                    safe_missed,
+                    extra_seconds
+                ),
+            }
+        }
+    }
+}
+
+/// Public entry point: simulate release scenarios for a vault.
+///
+/// Returns `Err` with a message when the vault is not found.
+pub fn simulate_release_handler(
+    store: &VaultStore,
+    vault_id: &str,
+    scenario_types: Vec<ScenarioType>,
+    missed_count: u32,
+) -> Result<SimulateReleaseResponse, String> {
+    let vaults = store.lock().unwrap();
+    let vault = vaults
+        .get(vault_id)
+        .cloned()
+        .ok_or_else(|| format!("Vault '{vault_id}' not found"))?;
+    drop(vaults);
+
+    let now = Utc::now();
+
+    // Compute effective TTL remaining: prefer the stored value, fall back to
+    // computing from last_check_in + check_in_interval.
+    let ttl_remaining_secs: u64 = match vault.ttl_remaining {
+        Some(t) => t,
+        None => {
+            let elapsed = now
+                .signed_duration_since(vault.last_check_in)
+                .num_seconds()
+                .max(0) as u64;
+            vault.check_in_interval.saturating_sub(elapsed)
+        }
+    };
+
+    let effective_missed = missed_count.max(1);
+    let scenario_results: Vec<ScenarioResult> = scenario_types
+        .into_iter()
+        .map(|s| {
+            simulate_scenario(
+                now,
+                s,
+                ttl_remaining_secs,
+                vault.check_in_interval,
+                effective_missed,
+            )
+        })
+        .collect();
+
+    Ok(SimulateReleaseResponse {
+        vault_id: vault.id,
+        current_ttl_remaining: vault.ttl_remaining,
+        check_in_interval: vault.check_in_interval,
+        last_check_in: vault.last_check_in,
+        scenarios: scenario_results,
+        simulated_at: now,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -851,7 +966,7 @@ mod tests {
             last_check_in: Utc::now(),
             created_at: Utc::now(),
             status: VaultStatus::Active,
-            ttl_remaining: Some(100000),
+            ttl_remaining: Some(100_000),
         };
         store.lock().unwrap().insert("v1".to_string(), vault);
 
@@ -881,18 +996,18 @@ mod tests {
             last_check_in: Utc::now(),
             created_at: Utc::now(),
             status: VaultStatus::Active,
-            ttl_remaining: Some(100000),
+            ttl_remaining: Some(100_000),
         };
         let vault2 = Vault {
             id: "v2".to_string(),
             owner: "owner2".to_string(),
             beneficiary: "ben2".to_string(),
             balance: 2000,
-            check_in_interval: 172800,
+            check_in_interval: 172_800,
             last_check_in: Utc::now(),
             created_at: Utc::now(),
             status: VaultStatus::Active,
-            ttl_remaining: Some(200000),
+            ttl_remaining: Some(200_000),
         };
         store.lock().unwrap().insert("v1".to_string(), vault1);
         store.lock().unwrap().insert("v2".to_string(), vault2);
@@ -916,7 +1031,7 @@ mod tests {
             last_check_in: Utc::now(),
             created_at: Utc::now(),
             status: VaultStatus::Active,
-            ttl_remaining: Some(100000),
+            ttl_remaining: Some(100_000),
         };
         store.lock().unwrap().insert("v1".to_string(), vault);
 
@@ -941,7 +1056,7 @@ mod tests {
             last_check_in: Utc::now(),
             created_at: Utc::now(),
             status: VaultStatus::Active,
-            ttl_remaining: Some(100000),
+            ttl_remaining: Some(100_000),
         };
         store.lock().unwrap().insert("v1".to_string(), vault);
 
@@ -965,7 +1080,7 @@ mod tests {
             last_check_in: Utc::now(),
             created_at: Utc::now(),
             status: VaultStatus::Active,
-            ttl_remaining: Some(100000),
+            ttl_remaining: Some(100_000),
         };
         store.lock().unwrap().insert("v1".to_string(), vault);
 
@@ -1028,7 +1143,12 @@ mod tests {
         let analytics = get_vault_analytics_handler(&store);
         assert_eq!(analytics.total_vaults, 0);
         assert_eq!(analytics.active_vaults, 0);
-        assert_eq!(analytics.release_rate, 0.0);
+        // Exact: release_rate is a literal 0.0 when there are no vaults, not a
+        // division result, so there's no floating-point precision to worry about.
+        #[allow(clippy::float_cmp)]
+        {
+            assert_eq!(analytics.release_rate, 0.0);
+        }
         assert!(analytics.time_series.is_empty());
     }
 
@@ -1037,9 +1157,9 @@ mod tests {
         let store = create_vault_store();
         for i in 0..3 {
             store.lock().unwrap().insert(
-                format!("v{}", i),
+                format!("v{i}"),
                 Vault {
-                    id: format!("v{}", i),
+                    id: format!("v{i}"),
                     owner: "owner1".to_string(),
                     beneficiary: "ben1".to_string(),
                     balance: 100,
@@ -1364,7 +1484,7 @@ mod tests {
         let resp = result.unwrap();
         assert_eq!(resp.share.vault_id, "v1");
         assert_eq!(resp.token.permission, SharePermission::ViewOnly);
-        assert_eq!(resp.token.revoked, false);
+        assert!(!resp.token.revoked);
         assert!(resp.access_url.contains(&resp.token.token));
 
         // Verify persistence
@@ -1397,7 +1517,6 @@ mod tests {
     #[test]
     fn test_revoke_share_token_revokes() {
         let store = create_vault_store();
-        let share_store = create_share_store();
         let token_store = create_share_token_store();
         let audit_store = create_audit_store();
         store.lock().unwrap().insert(
@@ -1909,7 +2028,12 @@ mod tests {
         // Check withdrawal trends
         assert_eq!(analytics.withdrawal_trends.withdrawal_count, 1);
         assert_eq!(analytics.withdrawal_trends.total_withdrawals, 500);
-        assert_eq!(analytics.withdrawal_trends.average_withdrawal_amount, 500.0);
+        // Exact: 500 / 1 withdrawal is exactly representable, not an
+        // approximation, so strict float equality is safe here.
+        #[allow(clippy::float_cmp)]
+        {
+            assert_eq!(analytics.withdrawal_trends.average_withdrawal_amount, 500.0);
+        }
         assert!(analytics.withdrawal_trends.last_withdrawal_date.is_some());
 
         // Check check-in frequency
@@ -1965,7 +2089,7 @@ mod tests {
             vault_id: "v1".to_string(),
             event_type: EventType::TtlUpdate,
             timestamp: Utc::now() - chrono::Duration::days(60),
-            data: serde_json::json!({"ttl_remaining": 100000}),
+            data: serde_json::json!({"ttl_remaining": 100_000}),
         });
 
         // Add recent event (10 days ago) - should be included
@@ -2039,171 +2163,4 @@ mod tests {
         );
         assert!(analytics.withdrawal_trends.last_withdrawal_date.is_some());
     }
-}
-
-// ── Release Simulator ────────────────────────────────────────────────────────
-
-/// Parse a comma-separated `scenarios` query param into a `Vec<ScenarioType>`.
-/// Returns all three scenarios when the param is absent or empty.
-pub fn parse_scenario_types(raw: Option<&str>) -> Vec<ScenarioType> {
-    match raw {
-        None | Some("") => vec![
-            ScenarioType::NoCheckIns,
-            ScenarioType::ConsistentCheckIns,
-            ScenarioType::MissedCheckInDates,
-        ],
-        Some(s) => s
-            .split(',')
-            .filter_map(|part| match part.trim() {
-                "no_check_ins" => Some(ScenarioType::NoCheckIns),
-                "consistent_check_ins" => Some(ScenarioType::ConsistentCheckIns),
-                "missed_check_in_dates" => Some(ScenarioType::MissedCheckInDates),
-                _ => None,
-            })
-            .collect(),
-    }
-}
-
-/// Calculate the release date for a single scenario given vault state at `now`.
-///
-/// * `ttl_remaining_secs` — current TTL left in seconds (0 means already expired)
-/// * `check_in_interval`  — vault's configured check-in interval in seconds
-/// * `missed_count`       — for `MissedCheckInDates`: how many consecutive
-///   check-ins are missed before the owner stops entirely
-pub fn simulate_scenario(
-    now: DateTime<Utc>,
-    scenario: ScenarioType,
-    ttl_remaining_secs: u64,
-    check_in_interval: u64,
-    missed_count: u32,
-) -> ScenarioResult {
-    match scenario {
-        // Owner stops checking in immediately — vault releases when current TTL runs out.
-        ScenarioType::NoCheckIns => {
-            let release_at = now + chrono::Duration::seconds(ttl_remaining_secs as i64);
-            let seconds_until = ttl_remaining_secs as i64;
-            ScenarioResult {
-                scenario: ScenarioType::NoCheckIns,
-                description: "Owner performs no further check-ins. \
-                    Vault releases when the current TTL expires."
-                    .to_string(),
-                projected_release_at: release_at,
-                seconds_until_release: seconds_until,
-                confidence: "high".to_string(),
-                notes: format!(
-                    "Current TTL remaining: {} seconds ({:.1} days).",
-                    ttl_remaining_secs,
-                    ttl_remaining_secs as f64 / 86_400.0
-                ),
-            }
-        }
-
-        // Owner keeps checking in every `check_in_interval` seconds indefinitely.
-        // The vault never releases under this scenario.
-        ScenarioType::ConsistentCheckIns => {
-            // 100 years in seconds as a "never" sentinel
-            let never_secs: i64 = 100 * 365 * 24 * 3600;
-            let far_future = now + chrono::Duration::seconds(never_secs);
-            ScenarioResult {
-                scenario: ScenarioType::ConsistentCheckIns,
-                description: "Owner checks in consistently at the configured interval. \
-                    Vault does not release."
-                    .to_string(),
-                projected_release_at: far_future,
-                seconds_until_release: -1, // -1 signals "never" to clients
-                confidence: "high".to_string(),
-                notes: format!(
-                    "With a check-in interval of {} seconds ({:.1} days), \
-                    consistent check-ins prevent vault release indefinitely.",
-                    check_in_interval,
-                    check_in_interval as f64 / 86_400.0
-                ),
-            }
-        }
-
-        // Owner misses `missed_count` consecutive check-ins, then stops.
-        // Each missed check-in adds one full `check_in_interval` to the TTL runway.
-        ScenarioType::MissedCheckInDates => {
-            let safe_missed = missed_count.max(1);
-            // After missing `safe_missed` check-ins the TTL has been running down
-            // for `safe_missed * check_in_interval` additional seconds beyond the current TTL.
-            let extra_seconds = (safe_missed as u64).saturating_mul(check_in_interval);
-            let total_seconds = ttl_remaining_secs.saturating_add(extra_seconds);
-            let release_at = now + chrono::Duration::seconds(total_seconds as i64);
-            let confidence = if safe_missed <= 2 { "medium" } else { "low" }.to_string();
-            ScenarioResult {
-                scenario: ScenarioType::MissedCheckInDates,
-                description: format!(
-                    "Owner misses {} consecutive check-in(s), then stops entirely.",
-                    safe_missed
-                ),
-                projected_release_at: release_at,
-                seconds_until_release: total_seconds as i64,
-                confidence,
-                notes: format!(
-                    "Each missed check-in adds {} seconds ({:.1} days) to the release window. \
-                    {} missed check-in(s) → {} additional seconds.",
-                    check_in_interval,
-                    check_in_interval as f64 / 86_400.0,
-                    safe_missed,
-                    extra_seconds
-                ),
-            }
-        }
-    }
-}
-
-/// Public entry point: simulate release scenarios for a vault.
-///
-/// Returns `Err` with a message when the vault is not found.
-pub fn simulate_release_handler(
-    store: &VaultStore,
-    vault_id: &str,
-    scenario_types: Vec<ScenarioType>,
-    missed_count: u32,
-) -> Result<SimulateReleaseResponse, String> {
-    let vaults = store.lock().unwrap();
-    let vault = vaults
-        .get(vault_id)
-        .cloned()
-        .ok_or_else(|| format!("Vault '{}' not found", vault_id))?;
-    drop(vaults);
-
-    let now = Utc::now();
-
-    // Compute effective TTL remaining: prefer the stored value, fall back to
-    // computing from last_check_in + check_in_interval.
-    let ttl_remaining_secs: u64 = match vault.ttl_remaining {
-        Some(t) => t,
-        None => {
-            let elapsed = now
-                .signed_duration_since(vault.last_check_in)
-                .num_seconds()
-                .max(0) as u64;
-            vault.check_in_interval.saturating_sub(elapsed)
-        }
-    };
-
-    let effective_missed = missed_count.max(1);
-    let scenario_results: Vec<ScenarioResult> = scenario_types
-        .into_iter()
-        .map(|s| {
-            simulate_scenario(
-                now,
-                s,
-                ttl_remaining_secs,
-                vault.check_in_interval,
-                effective_missed,
-            )
-        })
-        .collect();
-
-    Ok(SimulateReleaseResponse {
-        vault_id: vault.id,
-        current_ttl_remaining: vault.ttl_remaining,
-        check_in_interval: vault.check_in_interval,
-        last_check_in: vault.last_check_in,
-        scenarios: scenario_results,
-        simulated_at: now,
-    })
 }

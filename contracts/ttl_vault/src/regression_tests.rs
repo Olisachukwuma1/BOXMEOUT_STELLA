@@ -4,12 +4,9 @@ extern crate alloc;
 
 use super::*;
 use soroban_sdk::{
-    testutils::{
-        storage::{Instance as _, Persistent as _},
-        Address as _, Events, Ledger,
-    },
-    token::{self, StellarAssetClient},
-    vec, Address, BytesN, Env, IntoVal, TryIntoVal, Val,
+    testutils::{Address as _, Events, Ledger},
+    token::StellarAssetClient,
+    Address, BytesN, Env, IntoVal, TryIntoVal, Val,
 };
 
 fn setup() -> (
@@ -124,7 +121,7 @@ fn passkey_biometric_bind_and_checkin() {
 
     // Verify passkey record contains biometric binding
     let passkeys = client.get_vault_passkeys(&vault_id);
-    assert!(passkeys.len() > 0);
+    assert!(!passkeys.is_empty());
     let found = passkeys
         .iter()
         .any(|p| p.hash == passkey_hash && p.biometric_hash.is_some());
@@ -154,7 +151,7 @@ fn passkey_biometric_bind_and_checkin() {
 /// Previously: Bug caused deposits to not update balance
 #[test]
 fn regression_deposit_updates_balance() {
-    let (env, owner, beneficiary, _, token_address, client) = setup();
+    let (_env, owner, beneficiary, _, _token_address, client) = setup();
 
     let vault_id = client.create_vault(&owner, &beneficiary, &1000u64, &None);
 
@@ -175,7 +172,7 @@ fn regression_deposit_updates_balance() {
 /// Previously: Bug caused withdrawals to not update balance
 #[test]
 fn regression_withdrawal_updates_balance() {
-    let (env, owner, beneficiary, _, token_address, client) = setup();
+    let (_env, owner, beneficiary, _, _token_address, client) = setup();
 
     let vault_id = client.create_vault(&owner, &beneficiary, &1000u64, &None);
     let deposit_amount = 100_000i128;
@@ -365,7 +362,7 @@ fn test_vault_ids_are_unique_across_multiple_creates() {
 /// Ensures the counter does not advance when create_vault fails
 #[test]
 fn test_vault_id_counter_is_consistent_after_failure() {
-    let (env, owner, beneficiary, _, _, client) = setup();
+    let (_env, owner, beneficiary, _, _, client) = setup();
 
     // Count should start at 0
     assert_eq!(client.vault_count(), 0, "Initial count should be 0");

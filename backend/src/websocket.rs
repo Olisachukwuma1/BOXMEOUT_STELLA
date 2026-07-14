@@ -57,7 +57,7 @@ impl VaultBroadcaster {
         self.tx.subscribe()
     }
 
-    pub async fn broadcast(&self, event: VaultEvent) {
+    pub fn broadcast(&self, event: VaultEvent) {
         let _ = self.tx.send(event);
     }
 }
@@ -82,8 +82,8 @@ pub fn extract_token_from_header(header_value: &str) -> Option<&str> {
 
 pub async fn handle_vault_stream(
     vault_id: String,
-    mut rx: broadcast::Receiver<VaultEvent>,
-    mut ws_sink: WsSink,
+    rx: broadcast::Receiver<VaultEvent>,
+    ws_sink: WsSink,
 ) {
     handle_authenticated_vault_stream(vec![vault_id], rx, ws_sink).await;
 }
@@ -94,7 +94,7 @@ pub async fn handle_authenticated_vault_stream(
     mut ws_sink: WsSink,
 ) {
     let mut heartbeat = interval(HEARTBEAT_INTERVAL);
-    let mut last_pong = Instant::now();
+    let last_pong = Instant::now();
     let mut awaiting_pong = false;
 
     loop {
@@ -120,7 +120,7 @@ pub async fn handle_authenticated_vault_stream(
                 if awaiting_pong && last_pong.elapsed() > HEARTBEAT_INTERVAL + PONG_TIMEOUT {
                     break;
                 }
-                if ws_sink.send(Message::Ping(vec![].into())).await.is_err() {
+                if ws_sink.send(Message::Ping(vec![])).await.is_err() {
                     break;
                 }
                 awaiting_pong = true;
@@ -188,15 +188,14 @@ pub async fn handle_vault_stream_with_heartbeat(
                         awaiting_pong = false;
                     }
                     Some(Ok(Message::Close(_))) | None => break,
-                    Some(Ok(_)) => {
-                        if !rate_limiter.check_and_count() {
+                    Some(Ok(_))
+                        if !rate_limiter.check_and_count() => {
                             let _ = ws_sink.send(Message::Close(Some(CloseFrame {
                                 code: CloseCode::Policy,
                                 reason: "message rate limit exceeded".into(),
                             }))).await;
                             break;
                         }
-                    }
                     _ => {}
                 }
             }
@@ -205,7 +204,7 @@ pub async fn handle_vault_stream_with_heartbeat(
                     let _ = ws_sink.send(Message::Close(None)).await;
                     break;
                 }
-                if ws_sink.send(Message::Ping(vec![].into())).await.is_err() {
+                if ws_sink.send(Message::Ping(vec![])).await.is_err() {
                     break;
                 }
                 awaiting_pong = true;
@@ -341,7 +340,7 @@ mod tests {
 
     #[test]
     fn test_authorized_vault_ids_filtering() {
-        let authorized = vec!["v1".to_string(), "v3".to_string()];
+        let authorized = ["v1".to_string(), "v3".to_string()];
         let event_v1 = VaultEvent {
             vault_id: "v1".to_string(),
             event_type: EventType::CheckIn,

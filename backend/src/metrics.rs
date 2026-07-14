@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -70,21 +71,21 @@ impl Metrics {
 }
 
 fn push_counter(out: &mut String, name: &str, help: &str, value: u64) {
-    out.push_str(&format!("# HELP {name} {help}\n"));
-    out.push_str(&format!("# TYPE {name} counter\n"));
-    out.push_str(&format!("{name} {value}\n"));
+    let _ = writeln!(out, "# HELP {name} {help}");
+    let _ = writeln!(out, "# TYPE {name} counter");
+    let _ = writeln!(out, "{name} {value}");
 }
 
 fn push_gauge(out: &mut String, name: &str, help: &str, value: u64) {
-    out.push_str(&format!("# HELP {name} {help}\n"));
-    out.push_str(&format!("# TYPE {name} gauge\n"));
-    out.push_str(&format!("{name} {value}\n"));
+    let _ = writeln!(out, "# HELP {name} {help}");
+    let _ = writeln!(out, "# TYPE {name} gauge");
+    let _ = writeln!(out, "{name} {value}");
 }
 
 fn push_gauge_i64(out: &mut String, name: &str, help: &str, value: i64) {
-    out.push_str(&format!("# HELP {name} {help}\n"));
-    out.push_str(&format!("# TYPE {name} gauge\n"));
-    out.push_str(&format!("{name} {value}\n"));
+    let _ = writeln!(out, "# HELP {name} {help}");
+    let _ = writeln!(out, "# TYPE {name} gauge");
+    let _ = writeln!(out, "{name} {value}");
 }
 
 #[cfg(test)]

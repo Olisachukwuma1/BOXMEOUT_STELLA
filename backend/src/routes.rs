@@ -1,3 +1,10 @@
+// axum's Handler trait is only implemented for async fns (or functions returning
+// a Future); every handler in this file is registered on a Router (see
+// main.rs::build_router), except `unsubscribe`, which is documented in
+// docs/backend-api.md as a live endpoint but is not currently wired up there.
+// None of these bodies await anything today, but the signature is fixed by axum.
+#![allow(clippy::unused_async)]
+
 use std::sync::Arc;
 
 use axum::{
@@ -8,7 +15,6 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
-    audit,
     db::{AppState, Db},
     error::AppError,
     handlers::{parse_scenario_types, simulate_release_handler},

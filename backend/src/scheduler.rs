@@ -11,7 +11,7 @@ use crate::{db::Db, models::Frequency};
 /// In production, replace `fetch_ttl_remaining` with a real Stellar RPC call
 /// and `send_reminder` with actual email/SMS/push dispatch.
 pub async fn run(db: Arc<Db>) {
-    let mut interval = tokio::time::interval(Duration::from_secs(60));
+    let mut interval = tokio::time::interval(Duration::from_mins(1));
     loop {
         interval.tick().await;
 
@@ -19,7 +19,7 @@ pub async fn run(db: Arc<Db>) {
         match db.all() {
             Ok(all_prefs) => {
                 for prefs in all_prefs {
-                    let ttl_hours = fetch_ttl_remaining(prefs.vault_id).await;
+                    let ttl_hours = fetch_ttl_remaining(prefs.vault_id);
                     let window = prefs.hours_before_expiry;
 
                     let subscription = db.get_subscription(prefs.vault_id).ok().flatten();
@@ -31,14 +31,14 @@ pub async fn run(db: Arc<Db>) {
                                 ttl_hours <= window && ttl_hours > window.saturating_sub(1)
                             }
                             SubscriptionFrequency::Daily => {
-                                ttl_hours <= window && ttl_hours % 24 == 0
+                                ttl_hours <= window && ttl_hours.is_multiple_of(24)
                             }
                             SubscriptionFrequency::Weekly => {
-                                ttl_hours <= window && ttl_hours % (24 * 7) == 0
+                                ttl_hours <= window && ttl_hours.is_multiple_of(24 * 7)
                             }
                             SubscriptionFrequency::Hourly => ttl_hours <= window,
                             SubscriptionFrequency::Monthly => {
-                                ttl_hours <= window && ttl_hours % (24 * 30) == 0
+                                ttl_hours <= window && ttl_hours.is_multiple_of(24 * 30)
                             }
                         }
                     } else {
@@ -46,10 +46,14 @@ pub async fn run(db: Arc<Db>) {
                             Frequency::Once => {
                                 ttl_hours <= window && ttl_hours > window.saturating_sub(1)
                             }
-                            Frequency::Daily => ttl_hours <= window && ttl_hours % 24 == 0,
-                            Frequency::Weekly => ttl_hours <= window && ttl_hours % (24 * 7) == 0,
+                            Frequency::Daily => ttl_hours <= window && ttl_hours.is_multiple_of(24),
+                            Frequency::Weekly => {
+                                ttl_hours <= window && ttl_hours.is_multiple_of(24 * 7)
+                            }
                             Frequency::Hourly => ttl_hours <= window,
-                            Frequency::Monthly => ttl_hours <= window && ttl_hours % (24 * 30) == 0,
+                            Frequency::Monthly => {
+                                ttl_hours <= window && ttl_hours.is_multiple_of(24 * 30)
+                            }
                         }
                     };
 
@@ -71,7 +75,7 @@ pub async fn run(db: Arc<Db>) {
                             };
 
                             if deliver_on_channel {
-                                send_reminder(prefs.vault_id, channel, ttl_hours).await;
+                                send_reminder(prefs.vault_id, channel, ttl_hours);
                             }
                         }
                     }
@@ -83,11 +87,11 @@ pub async fn run(db: Arc<Db>) {
         }
 
         // 2) TTL insurance scheduler.
-        extend_ttl_for_inactive_owners(&db).await;
+        extend_ttl_for_inactive_owners(&db);
     }
 }
 
-async fn extend_ttl_for_inactive_owners(db: &Arc<Db>) {
+fn extend_ttl_for_inactive_owners(db: &Arc<Db>) {
     let policies = match db.all_enabled_insurance_policies() {
         Ok(p) => p,
         Err(e) => {
@@ -118,7 +122,7 @@ async fn extend_ttl_for_inactive_owners(db: &Arc<Db>) {
         };
 
         let inactive_for = now.signed_duration_since(last_active).num_seconds();
-        if inactive_for < policy.inactivity_threshold_seconds as i64 {
+        if inactive_for < policy.inactivity_threshold_seconds.cast_signed() {
             continue;
         }
 
@@ -147,11 +151,11 @@ async fn extend_ttl_for_inactive_owners(db: &Arc<Db>) {
 
 /// Stub: returns hours remaining until vault TTL expiry.
 /// Replace with a Stellar RPC call to `get_ttl_remaining`.
-async fn fetch_ttl_remaining(_vault_id: u64) -> u32 {
+fn fetch_ttl_remaining(_vault_id: u64) -> u32 {
     u32::MAX
 }
 
 /// Stub: dispatches a reminder via the given channel.
-async fn send_reminder(vault_id: u64, channel: &crate::models::Channel, hours_left: u32) {
+fn send_reminder(vault_id: u64, channel: &crate::models::Channel, hours_left: u32) {
     tracing::info!(vault_id, ?channel, hours_left, "sending reminder");
 }

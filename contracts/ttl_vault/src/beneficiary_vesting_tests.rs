@@ -6,7 +6,7 @@ use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     token::StellarAssetClient,
-    vec, Address, Env,
+    Address, Env,
 };
 
 fn setup_vesting() -> (Env, Address, Address, u64, TtlVaultContractClient<'static>) {

@@ -3,11 +3,7 @@
 extern crate alloc;
 
 use super::*;
-use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    token::StellarAssetClient,
-    vec, Address, Env,
-};
+use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, vec, Address, Env};
 
 fn setup_pool_env() -> (
     Env,
