@@ -47,7 +47,8 @@ use types::{
     OWNERSHIP_TRANSFER_EXPIRED_TOPIC, PARTIAL_LIQUIDATE_TOPIC, PASSKEY_EXPIRY_EXTENDED_TOPIC,
     PASSKEY_LOCKOUT_TOPIC, PASSKEY_RECOVERED_TOPIC, PASSKEY_RECOVERY_INITIATED_TOPIC,
     PASSKEY_ROTATION_ENFORCED_TOPIC, PASSKEY_ROTATION_REQUIRED_TOPIC, PASSKEY_UNLOCKED_TOPIC,
-    PASSKEY_USAGE_TOPIC, PAUSE_TOPIC, PAUSE_VAULT_TOPIC, PING_EXPIRY_TOPIC, POOL_CREATED_TOPIC,
+    PASSKEY_EXPIRY_WARNING_TOPIC, PASSKEY_USAGE_TOPIC, PAUSE_TOPIC, PAUSE_VAULT_TOPIC,
+    PING_EXPIRY_TOPIC, POOL_CREATED_TOPIC,
     PROOF_OF_LIFE_TOPIC, RECOVERY_EXTEND_TOPIC, RELEASE_TOPIC, RELEASE_VOTE_PASSED_TOPIC,
     RELEASE_VOTE_TOPIC, REMOVE_PASSKEY_TOPIC, RESTORE_VAULT_TOPIC, RESUME_VAULT_TOPIC,
     REVOKE_DELEGATE_TOPIC, ROTATE_PASSKEY_TOPIC, SET_BENEFICIARIES_TOPIC,
@@ -106,6 +107,8 @@ mod beneficiary_vesting_tests;
 mod bps_invariant_tests;
 #[cfg(test)]
 mod lifecycle_tests;
+#[cfg(test)]
+mod passkey_expiry_notification_tests;
 #[cfg(test)]
 mod regression_tests;
 
@@ -3212,7 +3215,38 @@ impl TtlVaultContract {
         if ttl < EXPIRY_WARNING_THRESHOLD {
             env.events().publish((PING_EXPIRY_TOPIC, vault_id), ttl);
         }
+
+        // Issue #560: per-passkey expiry warning, additive to the vault-level check above.
+        Self::check_passkey_expiry_warnings(&env, vault_id, env.ledger().timestamp());
+
         ttl
+    }
+
+    /// Emits `pk_expwrn` for every registered passkey on `vault_id` whose
+    /// remaining time until its configured `PasskeyExpiry` is below
+    /// `EXPIRY_WARNING_THRESHOLD` (#560, Requirement 4 AC 7).
+    fn check_passkey_expiry_warnings(env: &Env, vault_id: u64, now: u64) {
+        let passkeys: Vec<PasskeyHash> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::VaultPasskeys(vault_id))
+            .unwrap_or_else(|| Vec::new(env));
+
+        for pk in passkeys.iter() {
+            if let Some(expiry) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, u64>(&DataKey::PasskeyExpiry(vault_id, pk.hash.clone()))
+            {
+                let seconds_remaining = expiry.saturating_sub(now);
+                if seconds_remaining < EXPIRY_WARNING_THRESHOLD {
+                    env.events().publish(
+                        (PASSKEY_EXPIRY_WARNING_TOPIC, vault_id),
+                        (pk.hash.clone(), seconds_remaining),
+                    );
+                }
+            }
+        }
     }
 
     // --- Task 2: partial_release ---

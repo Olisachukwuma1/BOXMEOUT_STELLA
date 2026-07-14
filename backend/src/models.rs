@@ -74,6 +74,10 @@ pub enum NotificationType {
     CheckInReminder,
     VaultReleased,
     VaultPaused,
+    /// A vault passkey is approaching its expiry timestamp (#560).
+    PasskeyExpiringSoon,
+    /// A vault passkey has already expired (#560).
+    PasskeyExpired,
 }
 
 /// Delivery status of a single notification attempt.
@@ -179,6 +183,12 @@ pub struct ScheduledNotification {
     pub status: DeliveryStatus,
     pub max_retry_attempts: u32,
     pub sent_at: Option<DateTime<Utc>>,
+    /// Set for `PasskeyExpiringSoon` / `PasskeyExpired` notifications — identifies
+    /// which passkey this notification is about (#560).
+    pub passkey_hash: Option<String>,
+    /// Approximate hours remaining until expiry at scheduling time, used to
+    /// populate the notification body (#560).
+    pub ttl_hours: Option<u64>,
 }
 
 /// Delivery record written after each send attempt.

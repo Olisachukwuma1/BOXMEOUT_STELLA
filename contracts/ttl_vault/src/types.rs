@@ -6,6 +6,11 @@ pub const MAX_VESTING_SCHEDULES: u32 = 20;
 pub const RELEASE_TOPIC: Symbol = symbol_short!("release");
 pub const VAULT_CREATED_TOPIC: Symbol = symbol_short!("v_created");
 pub const PING_EXPIRY_TOPIC: Symbol = symbol_short!("ping_exp");
+/// Emitted by `ping_expiry` for each passkey whose remaining TTL is below
+/// `EXPIRY_WARNING_THRESHOLD` (#560, Requirement 4 AC 7). Named `pk_expwrn`
+/// rather than the spec's literal `pk_exp_warn` because `symbol_short!` is
+/// limited to 9 characters.
+pub const PASSKEY_EXPIRY_WARNING_TOPIC: Symbol = symbol_short!("pk_expwrn");
 /// Emitted during check_in when the new TTL (= check_in_interval) is below EXPIRY_WARNING_THRESHOLD.
 pub const TTL_WARNING_TOPIC: Symbol = symbol_short!("ttl_warn");
 pub const DEPOSIT_TOPIC: Symbol = symbol_short!("deposit");
