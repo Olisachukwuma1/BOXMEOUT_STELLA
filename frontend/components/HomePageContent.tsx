@@ -40,22 +40,24 @@ export function HomePageContent({ initialMarkets }: HomePageContentProps): JSX.E
       </section>
 
       {/* Tab bar */}
-      <div className="flex gap-1 rounded-lg bg-gray-800 p-1 w-fit mb-6" role="tablist">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            role="tab"
-            aria-selected={tab === t}
-            onClick={() => setTab(t)}
-            className={`px-5 py-2 rounded-md text-sm font-medium transition-colors ${
-              tab === t
-                ? "bg-amber-500 text-black shadow-sm"
-                : "text-gray-400 hover:text-white"
-            }`}
-          >
-            {t}
-          </button>
-        ))}
+      <div className="overflow-x-auto mb-6">
+        <div className="flex gap-1 rounded-lg bg-gray-800 p-1 w-max min-w-full sm:min-w-0" role="tablist">
+          {TABS.map((t) => (
+            <button
+              key={t}
+              role="tab"
+              aria-selected={tab === t}
+              onClick={() => setTab(t)}
+              className={`flex-1 sm:flex-none px-5 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
+                tab === t
+                  ? "bg-amber-500 text-black shadow-sm"
+                  : "text-gray-400 hover:text-white"
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
       </div>
 
       <MarketList markets={filtered} isLoading={false} />

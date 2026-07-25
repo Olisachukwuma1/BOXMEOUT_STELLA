@@ -11,7 +11,7 @@ export default function PortfolioPage(): JSX.Element {
 
   if (!address) {
     return (
-      <div className="text-center py-20 text-gray-400">
+      <div className="container mx-auto px-4 py-8 text-center text-gray-400">
         <p className="text-4xl mb-4">👛</p>
         <p className="mb-6 text-lg">Connect your wallet to view your portfolio.</p>
         <WalletConnectButton onConnected={connect} />
@@ -20,7 +20,7 @@ export default function PortfolioPage(): JSX.Element {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="container mx-auto px-4 py-8 space-y-6">
       <h1 className="text-2xl font-bold text-white">My Portfolio</h1>
 
       {isLoading ? (

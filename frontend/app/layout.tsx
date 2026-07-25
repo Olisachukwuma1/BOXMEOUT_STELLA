@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Navbar } from '@/components/Navbar';
 import { ToastProvider } from '@/components/ToastProvider';
 import '@/app/globals.css';
 
@@ -16,7 +17,10 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <ToastProvider>
-          {children}
+          <Navbar />
+          <main className="min-w-0 overflow-x-hidden">
+            {children}
+          </main>
         </ToastProvider>
       </body>
     </html>

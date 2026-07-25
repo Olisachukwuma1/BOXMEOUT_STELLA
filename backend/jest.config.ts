@@ -5,7 +5,11 @@ const config: Config = {
   testEnvironment: "node",
   rootDir: ".",
   roots: ["<rootDir>/src", "<rootDir>/__tests__", "<rootDir>/tests"],
-  testMatch: ["**/__tests__/**/*.test.ts", "**/tests/**/*.test.ts", "**/*.test.ts"],
+  testMatch: [
+    "**/__tests__/**/*.test.ts",
+    "**/tests/**/*.test.ts",
+    "**/*.test.ts",
+  ],
   moduleFileExtensions: ["ts", "js", "json"],
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
@@ -17,15 +21,6 @@ const config: Config = {
     "!src/**/*.d.ts",
     "!src/**/index.ts",
   ],
-  roots: ["<rootDir>/__tests__", "<rootDir>/src"],
-  testMatch: ["**/__tests__/**/*.test.ts", "**/*.test.ts", "**/tests/**/*.test.ts"],
-  moduleFileExtensions: ["ts", "js", "json"],
-  clearMocks: true,
-  restoreMocks: true,
-  rootDir: ".",
-  moduleNameMapper: {
-    "^@/(.*)$": "<rootDir>/src/$1",
-  },
 };
 
 export default config;
