@@ -67,6 +67,10 @@ pub fn dispute_threshold(env: Env) -> u32
 
 /// Sets the number of concurring oracle votes needed to resolve a dispute. Admin only.
 pub fn set_dispute_threshold(env: Env, threshold: u32)
+
+/// Returns the credential's attestation state as of `timestamp` (the most
+/// recent snapshot at or before it), or `None` if no such snapshot exists.
+pub fn get_credential_at_time(env: Env, credential_id: u64, timestamp: u64) -> Option<CredentialSnapshot>
 ```
 
 ### Current Verification Logic
@@ -133,6 +137,64 @@ This is deliberately a lighter-weight trust mechanism than oracle
 registration itself — voting rights are tied to the existing oracle
 allowlist rather than a separate credential-dispute-specific role, so no new
 admin surface is introduced beyond the threshold setting.
+
+---
+
+## Credential Temporal Queries & Retention Policy
+
+Every other credential query (`is_credential_invalidated`,
+`get_credential_disputes`, ...) answers "what is true *right now*?" —
+there was previously no way to ask "was this credential valid on Jan 1?"
+after the fact. `get_credential_at_time(credential_id, timestamp)` answers
+exactly that.
+
+### How it works
+
+1. **Snapshot on every state change**: whenever a credential's attestation
+   state changes — a fresh `attest` call (including re-attestation, which
+   can change the attesting oracle) or a dispute against it resolving
+   (`Upheld` or `Rejected`) — the contract records a `CredentialSnapshot`
+   (`credential_id`, `oracle`, `invalidated`, `timestamp`) at the current
+   ledger timestamp. This happens automatically; there is no separate
+   "take a snapshot" call to remember to make.
+2. **Index per credential**: each credential keeps an ascending list of the
+   ledger timestamps it has a snapshot at
+   (`DataKey::CredentialSnapshotTimestamps`). Because Soroban ledger close
+   time is monotonically non-decreasing and snapshots are only ever
+   appended, this list is always sorted — no explicit sort step is needed.
+3. **Lookup**: `get_credential_at_time` binary-searches that index for the
+   rightmost timestamp `<= timestamp` (O(log n) in the number of retained
+   snapshots for that credential) and returns the snapshot stored there, or
+   `None` if every snapshot postdates the query (including when the
+   credential has no snapshots at all). If two state changes land at the
+   same ledger timestamp — e.g. a dispute is filed and resolved without any
+   ledger-time advance — the later one overwrites the snapshot at that
+   timestamp rather than creating a duplicate index entry.
+
+### Retention policy
+
+Snapshots are stored in **persistent** storage (unlike the rest of this
+contract's state, which lives in instance storage) since they are
+write-once, append-only history rather than live state — this mirrors the
+`VaultSnapshot` pattern in `ttl_vault`. To bound persistent-storage growth,
+each credential retains at most `MAX_CREDENTIAL_SNAPSHOTS` (**1000**)
+snapshots: once a credential's snapshot count would exceed that, the
+oldest snapshot is pruned before the newest one is recorded.
+
+Practical implications:
+
+- A credential that changes state at most once per ledger close needs
+  1000 state changes (attestations/re-attestations plus dispute
+  resolutions) before its earliest history is pruned — in practice, far
+  more ledger closes than that, since state changes are comparatively
+  infrequent per credential.
+- Once pruned, a query for a timestamp older than the oldest retained
+  snapshot returns `None` — the same result as if the credential never
+  existed at that time. Callers that need unbounded history should index
+  the `disp_res`/`attest` activity off-chain (e.g. via an indexer watching
+  contract events) rather than relying on on-chain retention.
+- This cap is per-credential, not global — a busy credential does not
+  starve the retention budget of any other credential.
 
 ---
 

@@ -14,6 +14,11 @@ pub const MAX_REASON_SIZE: u32 = 1024;
 /// upholding or rejecting it) when no explicit threshold has been configured
 /// by the admin via [`ZkVerifierContract::set_dispute_threshold`].
 pub const DEFAULT_DISPUTE_THRESHOLD: u32 = 3;
+/// Maximum number of historical snapshots retained per credential. Once a
+/// credential's snapshot count exceeds this, the oldest snapshot is pruned
+/// to bound persistent-storage growth. See docs/zk-verifier.md, "Credential
+/// Retention Policy".
+pub const MAX_CREDENTIAL_SNAPSHOTS: u32 = 1000;
 
 const VERIFY_CLAIM_TOPIC: soroban_sdk::Symbol = symbol_short!("vfy_claim");
 const DISPUTE_OPEN_TOPIC: soroban_sdk::Symbol = symbol_short!("disp_open");
@@ -88,6 +93,13 @@ mod keys {
         /// Number of concurring votes needed to resolve a dispute. Falls
         /// back to DEFAULT_DISPUTE_THRESHOLD when unset.
         DisputeThreshold,
+        /// (credential_id, timestamp) -> CredentialSnapshot, captured every
+        /// time a credential's attestation or invalidation status changes.
+        CredentialSnapshot(u64, u64),
+        /// credential_id -> Vec<timestamp>, ascending, one entry per
+        /// retained snapshot for that credential (bounded by
+        /// MAX_CREDENTIAL_SNAPSHOTS).
+        CredentialSnapshotTimestamps(u64),
     }
 }
 
@@ -100,6 +112,20 @@ use keys::DataKey;
 pub struct AttestationRecord {
     pub credential_id: u64,
     pub oracle: Address,
+}
+
+/// A point-in-time snapshot of a credential's attestation state, captured
+/// whenever that state changes (re-attestation, or a dispute resolving).
+/// Used to answer historical questions like "was this credential valid at
+/// time T?" via [`ZkVerifierContract::get_credential_at_time`].
+#[contracttype]
+#[derive(Clone)]
+pub struct CredentialSnapshot {
+    pub credential_id: u64,
+    pub oracle: Address,
+    pub invalidated: bool,
+    /// Ledger timestamp at which this snapshot was captured.
+    pub timestamp: u64,
 }
 
 #[contracttype]
@@ -212,9 +238,12 @@ impl ZkVerifierContract {
             &attestation_key,
             &AttestationRecord {
                 credential_id,
-                oracle,
+                oracle: oracle.clone(),
             },
         );
+
+        let invalidated = Self::is_credential_invalidated(env.clone(), credential_id);
+        Self::record_credential_snapshot(&env, credential_id, oracle, invalidated);
 
         credential_id
     }
@@ -413,6 +442,14 @@ impl ZkVerifierContract {
                     .instance()
                     .set(&DataKey::CredentialInvalidated(dispute.credential_id), &true);
             }
+            if let Some(record) = Self::load_attestation_record(&env, dispute.credential_id) {
+                Self::record_credential_snapshot(
+                    &env,
+                    dispute.credential_id,
+                    record.oracle,
+                    dispute.status == DisputeStatus::Upheld,
+                );
+            }
             env.events().publish(
                 (DISPUTE_RESOLVED_TOPIC,),
                 (dispute_id, dispute.credential_id, dispute.status),
@@ -451,6 +488,39 @@ impl ZkVerifierContract {
             .instance()
             .get::<DataKey, bool>(&DataKey::CredentialInvalidated(credential_id))
             .unwrap_or(false)
+    }
+
+    /// Returns `credential_id`'s attestation state as of `timestamp`: the
+    /// most recent snapshot recorded at or before that ledger timestamp.
+    ///
+    /// A snapshot is captured every time the credential's state changes —
+    /// on `attest` (including re-attestation) and whenever a dispute
+    /// against it resolves. `get_credential_at_time` finds the latest such
+    /// snapshot with `snapshot.timestamp <= timestamp` via binary search
+    /// over the credential's (ascending) snapshot-timestamp index, so
+    /// lookups are O(log n) in the number of snapshots retained for that
+    /// credential rather than a linear scan.
+    ///
+    /// Returns `None` if the credential had no snapshot at or before
+    /// `timestamp` — either it did not exist yet at that time, or its
+    /// earliest snapshot has since been pruned by the retention policy
+    /// (see docs/zk-verifier.md, "Credential Retention Policy").
+    pub fn get_credential_at_time(
+        env: Env,
+        credential_id: u64,
+        timestamp: u64,
+    ) -> Option<CredentialSnapshot> {
+        let timestamps: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::CredentialSnapshotTimestamps(credential_id))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let idx = Self::floor_index(&timestamps, timestamp)?;
+        let snapshot_ts = timestamps.get(idx).unwrap();
+        env.storage()
+            .persistent()
+            .get(&DataKey::CredentialSnapshot(credential_id, snapshot_ts))
     }
 
     /// Returns the number of concurring votes required to resolve a
@@ -493,6 +563,92 @@ impl ZkVerifierContract {
             .unwrap_or(false)
         {
             panic_with_error!(env, VerifierError::OracleNotFound);
+        }
+    }
+
+    /// Looks up the current `AttestationRecord` for `credential_id` by
+    /// following `CredentialHashes(credential_id)` to the underlying
+    /// `Attestation(proof_hash, claim_hash)` entry. Returns `None` if the
+    /// credential id is unknown.
+    fn load_attestation_record(env: &Env, credential_id: u64) -> Option<AttestationRecord> {
+        let (proof_hash, claim_hash): (BytesN<32>, BytesN<32>) = env
+            .storage()
+            .instance()
+            .get(&DataKey::CredentialHashes(credential_id))?;
+        env.storage()
+            .instance()
+            .get(&DataKey::Attestation(proof_hash, claim_hash))
+    }
+
+    /// Captures a `CredentialSnapshot` for `credential_id` at the current
+    /// ledger timestamp, appending it to that credential's snapshot index.
+    /// If a snapshot was already captured at this exact timestamp (e.g. two
+    /// state changes land in the same ledger close), it is overwritten
+    /// in place rather than duplicated in the index — this keeps the index
+    /// strictly ascending, which `get_credential_at_time`'s binary search
+    /// depends on.
+    ///
+    /// Once the credential's retained-snapshot count exceeds
+    /// `MAX_CREDENTIAL_SNAPSHOTS`, the oldest snapshot is pruned. See
+    /// docs/zk-verifier.md, "Credential Retention Policy".
+    fn record_credential_snapshot(env: &Env, credential_id: u64, oracle: Address, invalidated: bool) {
+        let timestamp = env.ledger().timestamp();
+
+        env.storage().persistent().set(
+            &DataKey::CredentialSnapshot(credential_id, timestamp),
+            &CredentialSnapshot {
+                credential_id,
+                oracle,
+                invalidated,
+                timestamp,
+            },
+        );
+
+        let mut timestamps: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::CredentialSnapshotTimestamps(credential_id))
+            .unwrap_or_else(|| Vec::new(env));
+
+        if timestamps.last() != Some(timestamp) {
+            timestamps.push_back(timestamp);
+
+            if timestamps.len() > MAX_CREDENTIAL_SNAPSHOTS {
+                if let Some(oldest) = timestamps.first() {
+                    env.storage()
+                        .persistent()
+                        .remove(&DataKey::CredentialSnapshot(credential_id, oldest));
+                    timestamps.remove(0);
+                }
+            }
+
+            env.storage().persistent().set(
+                &DataKey::CredentialSnapshotTimestamps(credential_id),
+                &timestamps,
+            );
+        }
+    }
+
+    /// Returns the index of the rightmost entry in `timestamps` that is
+    /// `<= target`, or `None` if every entry exceeds `target` (or the vec
+    /// is empty). Requires `timestamps` to be sorted ascending, which holds
+    /// by construction: ledger close time is monotonically non-decreasing,
+    /// and `record_credential_snapshot` only ever appends.
+    fn floor_index(timestamps: &Vec<u64>, target: u64) -> Option<u32> {
+        let mut lo: u32 = 0;
+        let mut hi: u32 = timestamps.len();
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if timestamps.get(mid).unwrap() <= target {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if lo == 0 {
+            None
+        } else {
+            Some(lo - 1)
         }
     }
 }

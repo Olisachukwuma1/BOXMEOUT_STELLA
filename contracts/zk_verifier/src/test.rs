@@ -3,7 +3,7 @@
 use super::*;
 use soroban_sdk::{
     bytes,
-    testutils::{Address as _, Events as _},
+    testutils::{Address as _, Events as _, Ledger},
     Bytes, Env,
 };
 
@@ -487,4 +487,189 @@ fn test_admin_configurable_dispute_threshold() {
 fn test_zero_threshold_rejected() {
     let (_, _, client) = setup();
     client.set_dispute_threshold(&0u32);
+}
+
+// ── Credential temporal query tests ───────────────────────────────────────────
+
+/// An unknown credential id has no snapshot history at all.
+#[test]
+fn test_get_credential_at_time_unknown_credential_returns_none() {
+    let (_, _, client) = setup();
+    assert!(client.get_credential_at_time(&999u64, &0u64).is_none());
+}
+
+/// Querying a timestamp before the credential's first snapshot returns None.
+#[test]
+fn test_get_credential_at_time_before_first_snapshot_returns_none() {
+    let (env, _, client) = setup();
+    env.ledger().set_timestamp(100);
+    let oracle = Address::generate(&env);
+    client.register_oracle(&oracle);
+    let proof = bytes!(&env, 0xdeadbeef);
+    let claim = bytes!(&env, 0xcafebabe);
+    let credential_id = client.attest(&oracle, &proof, &claim);
+
+    assert!(client
+        .get_credential_at_time(&credential_id, &50u64)
+        .is_none());
+}
+
+/// attest() captures a snapshot at the ledger timestamp of attestation.
+/// Querying at that timestamp, or any later one, returns it.
+#[test]
+fn test_get_credential_at_time_returns_snapshot_at_and_after_attest() {
+    let (env, _, client) = setup();
+    env.ledger().set_timestamp(100);
+    let oracle = Address::generate(&env);
+    client.register_oracle(&oracle);
+    let proof = bytes!(&env, 0xdeadbeef);
+    let claim = bytes!(&env, 0xcafebabe);
+    let credential_id = client.attest(&oracle, &proof, &claim);
+
+    let snapshot = client
+        .get_credential_at_time(&credential_id, &100u64)
+        .unwrap();
+    assert_eq!(snapshot.credential_id, credential_id);
+    assert_eq!(snapshot.oracle, oracle);
+    assert!(!snapshot.invalidated);
+    assert_eq!(snapshot.timestamp, 100);
+
+    env.ledger().set_timestamp(500);
+    let later = client
+        .get_credential_at_time(&credential_id, &500u64)
+        .unwrap();
+    assert_eq!(later.timestamp, 100);
+}
+
+/// The historical query must reflect state as of the queried timestamp, not
+/// the credential's current state: valid before a dispute resolves, invalid
+/// from the moment it does.
+#[test]
+fn test_get_credential_at_time_reflects_state_before_and_after_dispute() {
+    let (env, _, client) = setup();
+    env.ledger().set_timestamp(100);
+    let oracles = register_oracles(&env, &client, 3);
+    let attester = oracles.get(0).unwrap();
+    let proof = bytes!(&env, 0xdeadbeef);
+    let claim = bytes!(&env, 0xcafebabe);
+    let credential_id = client.attest(&attester, &proof, &claim);
+
+    env.ledger().set_timestamp(200);
+    let initiator = Address::generate(&env);
+    let reason = bytes!(&env, 0xaa);
+    let dispute_id = client.initiate_credential_dispute(&credential_id, &initiator, &reason);
+
+    env.ledger().set_timestamp(300);
+    for oracle in oracles.iter() {
+        client.vote_on_dispute(&dispute_id, &oracle, &true);
+    }
+    assert!(client.is_credential_invalidated(&credential_id));
+
+    // As of a moment before the dispute was even filed, the credential was
+    // valid — even though it is invalid *now*.
+    let before = client
+        .get_credential_at_time(&credential_id, &150u64)
+        .unwrap();
+    assert!(!before.invalidated);
+
+    // As of the moment the dispute resolved, it was already invalid.
+    let after = client
+        .get_credential_at_time(&credential_id, &300u64)
+        .unwrap();
+    assert!(after.invalidated);
+    assert_eq!(after.timestamp, 300);
+}
+
+/// Re-attesting a credential under a different oracle records a new
+/// snapshot without erasing the earlier one — a query at the old timestamp
+/// still reports the original oracle.
+#[test]
+fn test_get_credential_at_time_tracks_oracle_change_on_reattestation() {
+    let (env, _, client) = setup();
+    env.ledger().set_timestamp(100);
+    let oracle_a = Address::generate(&env);
+    let oracle_b = Address::generate(&env);
+    client.register_oracle(&oracle_a);
+    client.register_oracle(&oracle_b);
+
+    let proof = bytes!(&env, 0xdeadbeef);
+    let claim = bytes!(&env, 0xcafebabe);
+    let credential_id = client.attest(&oracle_a, &proof, &claim);
+
+    env.ledger().set_timestamp(200);
+    let reattested_id = client.attest(&oracle_b, &proof, &claim);
+    assert_eq!(reattested_id, credential_id);
+
+    let early = client
+        .get_credential_at_time(&credential_id, &150u64)
+        .unwrap();
+    assert_eq!(early.oracle, oracle_a);
+
+    let late = client
+        .get_credential_at_time(&credential_id, &200u64)
+        .unwrap();
+    assert_eq!(late.oracle, oracle_b);
+}
+
+/// Two state changes landing at the same ledger timestamp overwrite the
+/// snapshot in place instead of duplicating the timestamp index — a dispute
+/// filed and resolved without any ledger-time advance still yields exactly
+/// one snapshot for that timestamp, holding the latest state.
+#[test]
+fn test_get_credential_at_time_same_timestamp_overwrites_snapshot() {
+    let (env, _, client) = setup();
+    env.ledger().set_timestamp(1);
+    let oracle = Address::generate(&env);
+    client.register_oracle(&oracle);
+    client.set_dispute_threshold(&1u32);
+    let proof = bytes!(&env, 0xdeadbeef);
+    let claim = bytes!(&env, 0xcafebabe);
+    let credential_id = client.attest(&oracle, &proof, &claim);
+
+    let initiator = Address::generate(&env);
+    let reason = bytes!(&env, 0xaa);
+    let dispute_id = client.initiate_credential_dispute(&credential_id, &initiator, &reason);
+    client.vote_on_dispute(&dispute_id, &oracle, &true);
+    assert!(client.is_credential_invalidated(&credential_id));
+
+    // All three state changes (attest, dispute filed, dispute resolved)
+    // happened at timestamp 1; the query must return the latest one.
+    let snapshot = client
+        .get_credential_at_time(&credential_id, &1u64)
+        .unwrap();
+    assert!(snapshot.invalidated);
+    assert_eq!(snapshot.timestamp, 1);
+}
+
+/// The snapshot history is capped at MAX_CREDENTIAL_SNAPSHOTS per
+/// credential: once exceeded, the oldest snapshot is pruned and becomes
+/// unqueryable, while the next-oldest remains.
+#[test]
+fn test_credential_snapshot_retention_prunes_oldest() {
+    let (env, _, client) = setup();
+    let oracle = Address::generate(&env);
+    client.register_oracle(&oracle);
+    let proof = bytes!(&env, 0xdeadbeef);
+    let claim = bytes!(&env, 0xcafebabe);
+
+    env.ledger().set_timestamp(1);
+    let credential_id = client.attest(&oracle, &proof, &claim);
+
+    // Re-attest at a fresh timestamp each time so every call records a
+    // distinct snapshot, until retention is forced to prune the oldest.
+    for ts in 2..=(MAX_CREDENTIAL_SNAPSHOTS as u64 + 1) {
+        env.ledger().set_timestamp(ts);
+        client.attest(&oracle, &proof, &claim);
+    }
+
+    // The very first snapshot (timestamp 1) has been pruned...
+    assert!(client
+        .get_credential_at_time(&credential_id, &1u64)
+        .is_none());
+    // ...but the second (timestamp 2) is still the oldest retained, and is
+    // what a query for anything before it now falls back to finding absent.
+    let oldest_retained = client
+        .get_credential_at_time(&credential_id, &2u64)
+        .unwrap();
+    assert_eq!(oldest_retained.timestamp, 2);
 }
