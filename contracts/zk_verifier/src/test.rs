@@ -494,8 +494,11 @@ fn test_zero_threshold_rejected() {
 /// An unknown credential id has no snapshot history at all.
 #[test]
 fn test_get_credential_at_time_unknown_credential_returns_none() {
-    let (_, _, client) = setup();
-    assert!(client.get_credential_at_time(&999u64, &0u64).is_none());
+    let (env, _, client) = setup();
+    let viewer = Address::generate(&env);
+    assert!(client
+        .get_credential_at_time(&viewer, &999u64, &0u64)
+        .is_none());
 }
 
 /// Querying a timestamp before the credential's first snapshot returns None.
@@ -509,8 +512,9 @@ fn test_get_credential_at_time_before_first_snapshot_returns_none() {
     let claim = bytes!(&env, 0xcafebabe);
     let credential_id = client.attest(&oracle, &proof, &claim);
 
+    let viewer = Address::generate(&env);
     assert!(client
-        .get_credential_at_time(&credential_id, &50u64)
+        .get_credential_at_time(&viewer, &credential_id, &50u64)
         .is_none());
 }
 
@@ -526,8 +530,9 @@ fn test_get_credential_at_time_returns_snapshot_at_and_after_attest() {
     let claim = bytes!(&env, 0xcafebabe);
     let credential_id = client.attest(&oracle, &proof, &claim);
 
+    let viewer = Address::generate(&env);
     let snapshot = client
-        .get_credential_at_time(&credential_id, &100u64)
+        .get_credential_at_time(&viewer, &credential_id, &100u64)
         .unwrap();
     assert_eq!(snapshot.credential_id, credential_id);
     assert_eq!(snapshot.oracle, oracle);
@@ -536,7 +541,7 @@ fn test_get_credential_at_time_returns_snapshot_at_and_after_attest() {
 
     env.ledger().set_timestamp(500);
     let later = client
-        .get_credential_at_time(&credential_id, &500u64)
+        .get_credential_at_time(&viewer, &credential_id, &500u64)
         .unwrap();
     assert_eq!(later.timestamp, 100);
 }
@@ -565,16 +570,17 @@ fn test_get_credential_at_time_reflects_state_before_and_after_dispute() {
     }
     assert!(client.is_credential_invalidated(&credential_id));
 
+    let viewer = Address::generate(&env);
     // As of a moment before the dispute was even filed, the credential was
     // valid — even though it is invalid *now*.
     let before = client
-        .get_credential_at_time(&credential_id, &150u64)
+        .get_credential_at_time(&viewer, &credential_id, &150u64)
         .unwrap();
     assert!(!before.invalidated);
 
     // As of the moment the dispute resolved, it was already invalid.
     let after = client
-        .get_credential_at_time(&credential_id, &300u64)
+        .get_credential_at_time(&viewer, &credential_id, &300u64)
         .unwrap();
     assert!(after.invalidated);
     assert_eq!(after.timestamp, 300);
@@ -600,13 +606,14 @@ fn test_get_credential_at_time_tracks_oracle_change_on_reattestation() {
     let reattested_id = client.attest(&oracle_b, &proof, &claim);
     assert_eq!(reattested_id, credential_id);
 
+    let viewer = Address::generate(&env);
     let early = client
-        .get_credential_at_time(&credential_id, &150u64)
+        .get_credential_at_time(&viewer, &credential_id, &150u64)
         .unwrap();
     assert_eq!(early.oracle, oracle_a);
 
     let late = client
-        .get_credential_at_time(&credential_id, &200u64)
+        .get_credential_at_time(&viewer, &credential_id, &200u64)
         .unwrap();
     assert_eq!(late.oracle, oracle_b);
 }
@@ -634,8 +641,9 @@ fn test_get_credential_at_time_same_timestamp_overwrites_snapshot() {
 
     // All three state changes (attest, dispute filed, dispute resolved)
     // happened at timestamp 1; the query must return the latest one.
+    let viewer = Address::generate(&env);
     let snapshot = client
-        .get_credential_at_time(&credential_id, &1u64)
+        .get_credential_at_time(&viewer, &credential_id, &1u64)
         .unwrap();
     assert!(snapshot.invalidated);
     assert_eq!(snapshot.timestamp, 1);
@@ -663,13 +671,137 @@ fn test_credential_snapshot_retention_prunes_oldest() {
     }
 
     // The very first snapshot (timestamp 1) has been pruned...
+    let viewer = Address::generate(&env);
     assert!(client
-        .get_credential_at_time(&credential_id, &1u64)
+        .get_credential_at_time(&viewer, &credential_id, &1u64)
         .is_none());
     // ...but the second (timestamp 2) is still the oldest retained, and is
     // what a query for anything before it now falls back to finding absent.
     let oldest_retained = client
-        .get_credential_at_time(&credential_id, &2u64)
+        .get_credential_at_time(&viewer, &credential_id, &2u64)
         .unwrap();
     assert_eq!(oldest_retained.timestamp, 2);
+}
+
+// ── Credential privacy tests ──────────────────────────────────────────────────
+
+/// A freshly attested credential defaults to `Public` — anyone may read its
+/// state via `get_credential_at_time` without it being set explicitly.
+#[test]
+fn test_credential_privacy_defaults_to_public() {
+    let (env, _, client) = setup();
+    env.ledger().set_timestamp(1);
+    let oracle = Address::generate(&env);
+    client.register_oracle(&oracle);
+    let proof = bytes!(&env, 0xdeadbeef);
+    let claim = bytes!(&env, 0xcafebabe);
+    let credential_id = client.attest(&oracle, &proof, &claim);
+
+    assert_eq!(client.credential_privacy(&credential_id), PrivacyLevel::Public);
+
+    let stranger = Address::generate(&env);
+    assert!(client
+        .get_credential_at_time(&stranger, &credential_id, &1u64)
+        .is_some());
+}
+
+/// Setting privacy on a credential id that was never attested must panic.
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_set_credential_privacy_unknown_credential_panics() {
+    let (_, _, client) = setup();
+    client.set_credential_privacy(&999u64, &PrivacyLevel::Internal);
+}
+
+/// The admin can change a credential's privacy level, and `credential_privacy`
+/// reflects the update.
+#[test]
+fn test_set_credential_privacy_updates_getter() {
+    let (env, _, client) = setup();
+    let oracle = Address::generate(&env);
+    client.register_oracle(&oracle);
+    let proof = bytes!(&env, 0xdeadbeef);
+    let claim = bytes!(&env, 0xcafebabe);
+    let credential_id = client.attest(&oracle, &proof, &claim);
+
+    client.set_credential_privacy(&credential_id, &PrivacyLevel::Confidential);
+    assert_eq!(
+        client.credential_privacy(&credential_id),
+        PrivacyLevel::Confidential
+    );
+}
+
+/// An `Internal` credential is readable by the admin and by any registered
+/// oracle (not just the one that attested it).
+#[test]
+fn test_internal_privacy_allows_admin_and_any_oracle() {
+    let (env, admin, client) = setup();
+    env.ledger().set_timestamp(1);
+    let attester = Address::generate(&env);
+    client.register_oracle(&attester);
+    let other_oracle = Address::generate(&env);
+    client.register_oracle(&other_oracle);
+
+    let proof = bytes!(&env, 0xdeadbeef);
+    let claim = bytes!(&env, 0xcafebabe);
+    let credential_id = client.attest(&attester, &proof, &claim);
+    client.set_credential_privacy(&credential_id, &PrivacyLevel::Internal);
+
+    assert!(client
+        .get_credential_at_time(&admin, &credential_id, &1u64)
+        .is_some());
+    assert!(client
+        .get_credential_at_time(&other_oracle, &credential_id, &1u64)
+        .is_some());
+}
+
+/// An `Internal` credential is not readable by an address that is neither
+/// the admin nor a registered oracle.
+#[test]
+#[should_panic(expected = "Error(Contract, #16)")]
+fn test_internal_privacy_denies_stranger() {
+    let (env, _, client) = setup();
+    let oracle = Address::generate(&env);
+    client.register_oracle(&oracle);
+    let proof = bytes!(&env, 0xdeadbeef);
+    let claim = bytes!(&env, 0xcafebabe);
+    let credential_id = client.attest(&oracle, &proof, &claim);
+    client.set_credential_privacy(&credential_id, &PrivacyLevel::Internal);
+
+    let stranger = Address::generate(&env);
+    client.get_credential_at_time(&stranger, &credential_id, &0u64);
+}
+
+/// A `Confidential` credential is readable by the admin...
+#[test]
+fn test_confidential_privacy_allows_admin() {
+    let (env, admin, client) = setup();
+    env.ledger().set_timestamp(1);
+    let oracle = Address::generate(&env);
+    client.register_oracle(&oracle);
+    let proof = bytes!(&env, 0xdeadbeef);
+    let claim = bytes!(&env, 0xcafebabe);
+    let credential_id = client.attest(&oracle, &proof, &claim);
+    client.set_credential_privacy(&credential_id, &PrivacyLevel::Confidential);
+
+    assert!(client
+        .get_credential_at_time(&admin, &credential_id, &1u64)
+        .is_some());
+}
+
+/// ...but not by a registered oracle — `Confidential` is stricter than
+/// `Internal` and excludes everyone but the admin, including the oracle that
+/// attested the credential in the first place.
+#[test]
+#[should_panic(expected = "Error(Contract, #16)")]
+fn test_confidential_privacy_denies_attesting_oracle() {
+    let (env, _, client) = setup();
+    let oracle = Address::generate(&env);
+    client.register_oracle(&oracle);
+    let proof = bytes!(&env, 0xdeadbeef);
+    let claim = bytes!(&env, 0xcafebabe);
+    let credential_id = client.attest(&oracle, &proof, &claim);
+    client.set_credential_privacy(&credential_id, &PrivacyLevel::Confidential);
+
+    client.get_credential_at_time(&oracle, &credential_id, &0u64);
 }

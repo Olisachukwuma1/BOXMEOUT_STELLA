@@ -60,6 +60,9 @@ pub enum VerifierError {
     ReasonTooLarge = 14,
     /// Threshold must be greater than zero.
     InvalidThreshold = 15,
+    /// The caller is not permitted to view this credential at its current
+    /// privacy level.
+    AccessDenied = 16,
 }
 
 /// Storage key discriminants.
@@ -100,6 +103,10 @@ mod keys {
         /// retained snapshot for that credential (bounded by
         /// MAX_CREDENTIAL_SNAPSHOTS).
         CredentialSnapshotTimestamps(u64),
+        /// credential_id -> PrivacyLevel. Absence means `Public`, so
+        /// pre-existing credentials are unaffected until an admin opts them
+        /// into a stricter level via `set_credential_privacy`.
+        CredentialPrivacy(u64),
     }
 }
 
@@ -126,6 +133,21 @@ pub struct CredentialSnapshot {
     pub invalidated: bool,
     /// Ledger timestamp at which this snapshot was captured.
     pub timestamp: u64,
+}
+
+/// Controls who may read a credential's attestation state via
+/// [`ZkVerifierContract::get_credential_at_time`]. Set per-credential by the
+/// admin via [`ZkVerifierContract::set_credential_privacy`]; defaults to
+/// `Public` for every credential until explicitly changed.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrivacyLevel {
+    /// Readable by anyone.
+    Public,
+    /// Readable only by the admin and registered oracles.
+    Internal,
+    /// Readable only by the admin.
+    Confidential,
 }
 
 #[contracttype]
@@ -505,11 +527,19 @@ impl ZkVerifierContract {
     /// `timestamp` — either it did not exist yet at that time, or its
     /// earliest snapshot has since been pruned by the retention policy
     /// (see docs/zk-verifier.md, "Credential Retention Policy").
+    ///
+    /// `requester` must authorize the call and must be permitted to view
+    /// `credential_id` under its current [`PrivacyLevel`] (see
+    /// `set_credential_privacy`), or this panics with `AccessDenied`.
     pub fn get_credential_at_time(
         env: Env,
+        requester: Address,
         credential_id: u64,
         timestamp: u64,
     ) -> Option<CredentialSnapshot> {
+        requester.require_auth();
+        Self::require_credential_access(&env, &requester, credential_id);
+
         let timestamps: Vec<u64> = env
             .storage()
             .persistent()
@@ -544,6 +574,31 @@ impl ZkVerifierContract {
             .set(&DataKey::DisputeThreshold, &threshold);
     }
 
+    /// Sets the [`PrivacyLevel`] governing who may call
+    /// `get_credential_at_time` for `credential_id`. Admin only.
+    pub fn set_credential_privacy(env: Env, credential_id: u64, level: PrivacyLevel) {
+        Self::require_admin(&env);
+        if !env
+            .storage()
+            .instance()
+            .has(&DataKey::CredentialHashes(credential_id))
+        {
+            panic_with_error!(&env, VerifierError::CredentialNotFound);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::CredentialPrivacy(credential_id), &level);
+    }
+
+    /// Returns `credential_id`'s current [`PrivacyLevel`], defaulting to
+    /// `Public` if it has never been explicitly set.
+    pub fn credential_privacy(env: Env, credential_id: u64) -> PrivacyLevel {
+        env.storage()
+            .instance()
+            .get(&DataKey::CredentialPrivacy(credential_id))
+            .unwrap_or(PrivacyLevel::Public)
+    }
+
     // ---- helpers ----
 
     fn require_admin(env: &Env) {
@@ -556,13 +611,40 @@ impl ZkVerifierContract {
     }
 
     fn require_registered_oracle(env: &Env, oracle: &Address) {
-        if !env
-            .storage()
+        if !Self::is_registered_oracle(env, oracle) {
+            panic_with_error!(env, VerifierError::OracleNotFound);
+        }
+    }
+
+    fn is_registered_oracle(env: &Env, oracle: &Address) -> bool {
+        env.storage()
             .instance()
             .get::<DataKey, bool>(&DataKey::Oracle(oracle.clone()))
             .unwrap_or(false)
-        {
-            panic_with_error!(env, VerifierError::OracleNotFound);
+    }
+
+    fn is_admin(env: &Env, address: &Address) -> bool {
+        env.storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .map(|admin| &admin == address)
+            .unwrap_or(false)
+    }
+
+    /// Enforces that `requester` is permitted to view `credential_id` under
+    /// its current [`PrivacyLevel`]: anyone for `Public`, the admin or a
+    /// registered oracle for `Internal`, and only the admin for
+    /// `Confidential`. Panics with `AccessDenied` otherwise.
+    fn require_credential_access(env: &Env, requester: &Address, credential_id: u64) {
+        let allowed = match Self::credential_privacy(env.clone(), credential_id) {
+            PrivacyLevel::Public => true,
+            PrivacyLevel::Internal => {
+                Self::is_admin(env, requester) || Self::is_registered_oracle(env, requester)
+            }
+            PrivacyLevel::Confidential => Self::is_admin(env, requester),
+        };
+        if !allowed {
+            panic_with_error!(env, VerifierError::AccessDenied);
         }
     }
 

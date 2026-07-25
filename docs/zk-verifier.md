@@ -70,7 +70,16 @@ pub fn set_dispute_threshold(env: Env, threshold: u32)
 
 /// Returns the credential's attestation state as of `timestamp` (the most
 /// recent snapshot at or before it), or `None` if no such snapshot exists.
-pub fn get_credential_at_time(env: Env, credential_id: u64, timestamp: u64) -> Option<CredentialSnapshot>
+/// `requester` must authorize the call and be permitted to view the
+/// credential under its current PrivacyLevel.
+pub fn get_credential_at_time(env: Env, requester: Address, credential_id: u64, timestamp: u64) -> Option<CredentialSnapshot>
+
+/// Sets the PrivacyLevel governing who may read a credential's state via
+/// `get_credential_at_time`. Admin only.
+pub fn set_credential_privacy(env: Env, credential_id: u64, level: PrivacyLevel)
+
+/// Returns a credential's current PrivacyLevel (defaults to `Public`).
+pub fn credential_privacy(env: Env, credential_id: u64) -> PrivacyLevel
 ```
 
 ### Current Verification Logic
@@ -195,6 +204,47 @@ Practical implications:
   contract events) rather than relying on on-chain retention.
 - This cap is per-credential, not global — a busy credential does not
   starve the retention budget of any other credential.
+
+---
+
+## Credential Privacy Levels
+
+By default every credential is equally visible to anyone who knows its
+`credential_id` — `get_credential_at_time` never checked who was asking.
+`PrivacyLevel` lets the admin restrict that on a per-credential basis:
+
+- **`Public`** (default): anyone may read the credential's state.
+- **`Internal`**: only the admin or a currently-registered oracle may read
+  it — not necessarily the oracle that attested it, any registered oracle.
+- **`Confidential`**: only the admin may read it.
+
+### Usage
+
+```rust
+// Admin-only: restrict credential 1 to internal readers.
+client.set_credential_privacy(&1u64, &PrivacyLevel::Internal);
+
+// Anyone can check the configured level.
+let level = client.credential_privacy(&1u64);
+
+// Reads are now access-controlled: `requester` must authorize the call
+// (so it cannot be spoofed) and must satisfy the credential's privacy
+// level, or the call panics with AccessDenied (#16).
+let snapshot = client.get_credential_at_time(&requester, &1u64, &timestamp);
+```
+
+`set_credential_privacy` panics with `CredentialNotFound` (#8) if
+`credential_id` was never attested, mirroring `initiate_credential_dispute`.
+
+### What this does and does not cover
+
+Privacy filtering applies to `get_credential_at_time`, the query that
+exposes a credential's full attestation state (oracle, invalidated flag,
+timestamp). It intentionally does **not** gate `verify_claim`: that call
+already requires the caller to possess the exact `proof` and `claim` bytes,
+so it authenticates via knowledge of the secret rather than identity, and
+restricting it further would not add confidentiality — only availability
+loss for legitimate holders of a confidential credential's proof.
 
 ---
 
@@ -447,6 +497,7 @@ fn test_oracle_attestation_flow() {
 | 13 | EmptyReason | Dispute reason bytes were empty |
 | 14 | ReasonTooLarge | Dispute reason exceeds MAX_REASON_SIZE (1 KB) |
 | 15 | InvalidThreshold | Dispute threshold must be greater than zero |
+| 16 | AccessDenied | Caller is not permitted to view this credential at its current privacy level |
 
 ---
 
